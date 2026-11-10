@@ -284,21 +284,44 @@ class ReviewService:
         review.rule_set_version = f"rules_count:{len(approved_rules)}"
         review.findings_count = len(audit_result.findings)
 
-        # Replace findings atomically
-        db.query(Finding).filter(Finding.review_id == review.id).delete()
+        # Synchronize findings without deleting existing instances (preserves object identity & history)
+        existing_findings = db.query(Finding).filter(Finding.review_id == review.id).all()
+        existing_by_sig = {
+            (ef.excerpt.strip().lower(), ef.category.strip().lower()): ef
+            for ef in existing_findings
+        }
+        active_sigs = set()
+
         for f in audit_result.findings:
-            new_f = Finding(
-                review_id=review.id,
-                severity=f.severity,
-                category=f.category,
-                excerpt=f.excerpt,
-                explanation=f.explanation,
-                guideline_reference=f.guideline_reference,
-                suggested_correction=f.suggested_correction,
-                confidence=f.confidence,
-                status="open",
-            )
-            db.add(new_f)
+            sig = (f.excerpt.strip().lower(), f.category.strip().lower())
+            active_sigs.add(sig)
+            if sig in existing_by_sig:
+                ef = existing_by_sig[sig]
+                ef.severity = f.severity
+                ef.explanation = f.explanation
+                ef.guideline_reference = f.guideline_reference
+                ef.suggested_correction = f.suggested_correction
+                ef.confidence = f.confidence
+                ef.status = "open"
+            else:
+                new_f = Finding(
+                    review_id=review.id,
+                    severity=f.severity,
+                    category=f.category,
+                    excerpt=f.excerpt,
+                    explanation=f.explanation,
+                    guideline_reference=f.guideline_reference,
+                    suggested_correction=f.suggested_correction,
+                    confidence=f.confidence,
+                    status="open",
+                )
+                db.add(new_f)
+
+        # Findings that are no longer active in the audited content are marked applied
+        for ef in existing_findings:
+            sig = (ef.excerpt.strip().lower(), ef.category.strip().lower())
+            if sig not in active_sigs:
+                ef.status = "applied"
 
         activity = ReviewActivity(
             review_id=review.id,
@@ -336,15 +359,16 @@ class ReviewService:
         replacement = finding.suggested_correction
 
         modified = False
-        if original_excerpt in review.content:
-            review.content = review.content.replace(original_excerpt, replacement, 1)
+        new_text = review.content
+        if original_excerpt in new_text:
+            new_text = new_text.replace(original_excerpt, replacement, 1)
             modified = True
         elif original_excerpt == "[Missing Regulatory Disclaimer]" or "disclaimer" in finding.category.lower():
             to_append = replacement if replacement.startswith("\n\n") else f"\n\n{replacement}"
             clean_disc = " ".join(replacement.replace("\n", " ").split()).lower()
-            clean_content = " ".join(review.content.split()).lower()
+            clean_content = " ".join(new_text.split()).lower()
             if clean_disc not in clean_content and "disclaimer:" not in clean_content:
-                review.content = review.content.rstrip() + to_append
+                new_text = new_text.rstrip() + to_append
                 modified = True
             elif clean_disc in clean_content or "disclaimer:" in clean_content:
                 # Already present without duplication
@@ -353,9 +377,9 @@ class ReviewService:
             # Case-insensitive replacement fallback
             import re
             pattern = re.compile(re.escape(original_excerpt), re.IGNORECASE)
-            new_c, count = pattern.subn(replacement, review.content, count=1)
+            new_c, count = pattern.subn(replacement, new_text, count=1)
             if count > 0:
-                review.content = new_c
+                new_text = new_c
                 modified = True
 
         if not modified:
@@ -363,29 +387,27 @@ class ReviewService:
                 f"Cannot apply correction: Offending excerpt '{original_excerpt}' was not found in current working document."
             )
 
-        finding.status = "applied"
-
-        # Recalculate score & status with applied finding marked as resolved
-        all_findings = db.query(Finding).filter(Finding.review_id == review_id).all()
-        new_score, new_status = scoring_service.calculate_score(all_findings)
-        review.compliance_score = new_score
-        review.status = new_status
-        review.audit_status = "verified"
-        review.audited_content_hash = hashlib.sha256(review.content.strip().encode("utf-8")).hexdigest()
-        review.audited_at = datetime.now(timezone.utc)
-        review.findings_count = len([f for f in all_findings if f.status == "open"])
-
         activity = ReviewActivity(
             review_id=review_id,
             user_id=user_id,
             action="Correction Applied",
-            details=f"Applied suggested correction '{replacement}'. Recalculated score: {new_score}/100.",
+            details=f"Applied suggested correction '{replacement}'. Re-auditing content.",
         )
         db.add(activity)
+
+        # Run FULL compliance engine on the actual corrected text
+        review = ReviewService.recheck_and_audit(
+            db=db,
+            review_id=review_id,
+            new_content=new_text,
+            user_id=user_id,
+        )
+        finding.status = "applied"
         db.commit()
         db.refresh(review)
         db.refresh(finding)
 
+        all_findings = db.query(Finding).filter(Finding.review_id == review_id).all()
         return ApplyCorrectionResponse(
             review_id=review.id,
             finding_id=finding.id,
@@ -450,22 +472,19 @@ class ReviewService:
         if disclaimer_to_append:
             updated_content = updated_content.rstrip() + disclaimer_to_append
 
-        review.content = updated_content
-
-        all_findings = db.query(Finding).filter(Finding.review_id == review_id).all()
-        new_score, new_status = scoring_service.calculate_score(all_findings)
-        review.compliance_score = new_score
-        review.status = new_status
-        review.audit_status = "verified"
-        review.audited_content_hash = hashlib.sha256(review.content.strip().encode("utf-8")).hexdigest()
-        review.audited_at = datetime.now(timezone.utc)
-        review.findings_count = len([f for f in all_findings if f.status == "open"])
+        # Run FULL compliance engine on the batch-corrected text
+        review = ReviewService.recheck_and_audit(
+            db=db,
+            review_id=review_id,
+            new_content=updated_content,
+            user_id=user_id,
+        )
 
         activity = ReviewActivity(
             review_id=review_id,
             user_id=user_id,
             action="Batch Corrections Applied",
-            details=f"Applied {applied_count} correction(s) to working draft. Recalculated score: {new_score}/100.",
+            details=f"Applied {applied_count} correction(s) to working draft. Re-audited score: {review.compliance_score}/100.",
         )
         db.add(activity)
         db.commit()

@@ -17,7 +17,7 @@ def ensure_schema_upgrades():
             if "content_reviews" in inspector.get_table_names():
                 columns = [c["name"] for c in inspector.get_columns("content_reviews")]
                 if "audit_status" not in columns:
-                    conn.execute(text("ALTER TABLE content_reviews ADD COLUMN audit_status VARCHAR(50) DEFAULT 'verified' NOT NULL"))
+                    conn.execute(text("ALTER TABLE content_reviews ADD COLUMN audit_status VARCHAR(50) DEFAULT 'unverified' NOT NULL"))
                 if "audited_content_hash" not in columns:
                     conn.execute(text("ALTER TABLE content_reviews ADD COLUMN audited_content_hash VARCHAR(64)"))
                 if "audited_at" not in columns:
@@ -26,6 +26,8 @@ def ensure_schema_upgrades():
                     conn.execute(text("ALTER TABLE content_reviews ADD COLUMN findings_count INTEGER DEFAULT 0 NOT NULL"))
                 if "rule_set_version" not in columns:
                     conn.execute(text("ALTER TABLE content_reviews ADD COLUMN rule_set_version VARCHAR(100)"))
+                # Ensure legacy records without an audited content hash are never marked verified
+                conn.execute(text("UPDATE content_reviews SET audit_status = 'unverified' WHERE audited_content_hash IS NULL"))
                 conn.commit()
     except Exception as exc:
         print(f"Schema upgrade notice: {exc}")

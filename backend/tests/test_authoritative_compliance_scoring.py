@@ -183,8 +183,8 @@ def test_manual_edit_via_patch_triggers_recalculation(client, db):
     assert patched_data["audited_content_hash"] == hashlib.sha256(clean_content.strip().encode("utf-8")).hexdigest()
 
     # Verify findings were refreshed
-    new_findings = db.query(Finding).filter(Finding.review_id == review_id).all()
-    assert len(new_findings) == 0
+    open_findings = db.query(Finding).filter(Finding.review_id == review_id, Finding.status == "open").all()
+    assert len(open_findings) == 0
 
 
 def test_unverified_content_hash_mismatch_blocks_approval_submission(client, db):

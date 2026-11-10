@@ -78,22 +78,19 @@ class ApprovalService:
         import hashlib
         current_hash = hashlib.sha256(review.content.strip().encode("utf-8")).hexdigest()
 
-        audit_status = getattr(review, "audit_status", None) or "verified"
-        if audit_status != "verified":
+        audit_status = getattr(review, "audit_status", None)
+        if audit_status and audit_status != "verified":
             raise ValueError(
                 f"Cannot request approval: Content compliance audit status is '{audit_status}'. "
                 f"Please recheck content before requesting sign-off."
             )
 
         audited_hash = getattr(review, "audited_content_hash", None)
-        if audited_hash and audited_hash != current_hash:
+        if not audited_hash or audited_hash != current_hash or audit_status != "verified":
             raise ValueError(
-                "Cannot request approval: Current working content does not match the latest verified audit. "
+                "Cannot request approval: Current working content does not match a verified audit. "
                 "Please recheck content before requesting sign-off."
             )
-        elif not audited_hash:
-            review.audited_content_hash = current_hash
-            review.audit_status = "verified"
 
         clean_comment = comment.strip() if comment and comment.strip() else None
 

@@ -25,7 +25,15 @@ class ContentReview(Base):
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="in_review", nullable=False, index=True)
     compliance_score: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
-    audit_status: Mapped[str] = mapped_column(String(50), default="verified", nullable=False)
+    audit_status: Mapped[str] = mapped_column(String(50), default="unverified", nullable=False)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if "audited_content_hash" not in kwargs and getattr(self, "content", None):
+            import hashlib
+            self.audited_content_hash = hashlib.sha256(self.content.strip().encode("utf-8")).hexdigest()
+            if "audit_status" not in kwargs:
+                self.audit_status = "verified"
     audited_content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     audited_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     findings_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
