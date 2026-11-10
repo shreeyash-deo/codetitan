@@ -22,6 +22,7 @@ import {
   Clock,
   FileText,
   Plus,
+  ShieldAlert,
   UploadCloud,
 } from 'lucide-react'
 
@@ -31,6 +32,10 @@ export const BrandGuidelinesPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const { user } = useAuth()
   const { currentWorkspace } = useWorkspace()
+
+  const userRole = (currentWorkspace?.role || 'employee').toLowerCase()
+  const isAdmin = userRole === 'admin'
+  const isReviewer = userRole === 'reviewer'
 
   const {
     approvedRules,
@@ -44,6 +49,7 @@ export const BrandGuidelinesPage: React.FC = () => {
     approveAllHighConfidenceCandidates,
     uploadSourceDocument,
     uploadDocumentFile,
+    reExtractDocument,
     deleteSourceDocument,
   } = useGovernance()
 
@@ -103,35 +109,59 @@ export const BrandGuidelinesPage: React.FC = () => {
           </Badge>
         }
         actions={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-xs"
-              onClick={() => setActiveTab('documents')}
-            >
-              <UploadCloud className="w-3.5 h-3.5 text-slate-600" />
-              <span>Upload Guidelines</span>
-            </Button>
+          isAdmin ? (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={() => setActiveTab('documents')}
+              >
+                <UploadCloud className="w-3.5 h-3.5 text-slate-600" />
+                <span>Upload Guidelines</span>
+              </Button>
 
-            <Button
-              variant="primaryBlue"
-              size="sm"
-              className="gap-1.5 text-xs font-semibold shadow-xs"
-              onClick={() => {
-                setEditingRule(null)
-                setEditingCandidateId(null)
-                setIsEditModalOpen(true)
-              }}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Guideline Rule</span>
-            </Button>
-          </div>
+              <Button
+                variant="primaryBlue"
+                size="sm"
+                className="gap-1.5 text-xs font-semibold shadow-xs"
+                onClick={() => {
+                  setEditingRule(null)
+                  setEditingCandidateId(null)
+                  setIsEditModalOpen(true)
+                }}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Guideline Rule</span>
+              </Button>
+            </div>
+          ) : undefined
         }
       />
 
-      {/* Four Main Tabs Navigation */}
+      {/* Read-only notification banner for Employee and Reviewer roles */}
+      {!isAdmin && (
+        <div className="rounded-xl border border-blue-200/80 bg-blue-50/60 p-4 text-xs text-blue-900 flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+              <ShieldAlert className="w-4 h-4 text-blue-700" />
+            </div>
+            <div>
+              <p className="font-semibold text-slate-900">
+                {isReviewer ? 'Reviewer Access (Read-Only Knowledge Studio)' : 'Employee Access (Read-Only Knowledge Studio)'}
+              </p>
+              <p className="text-slate-600 mt-0.5">
+                You can browse approved brand guidelines and reference source documents. Uploading manuals, editing brand laws, and approving candidate rules require Workspace Administrator privileges.
+              </p>
+            </div>
+          </div>
+          <Badge variant="outline" className="text-[10px] font-mono capitalize shrink-0 ml-4">
+            Role: {userRole}
+          </Badge>
+        </div>
+      )}
+
+      {/* Main Tabs Navigation */}
       <div className="flex items-center gap-2 border-b border-border">
         <button
           onClick={() => setActiveTab('overview')}
@@ -160,22 +190,24 @@ export const BrandGuidelinesPage: React.FC = () => {
           </span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('pending')}
-          className={`pb-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all relative ${
-            activeTab === 'pending'
-              ? 'border-amber-600 text-amber-700'
-              : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
-          }`}
-        >
-          <Clock className="w-3.5 h-3.5 text-amber-600" />
-          <span>Pending AI Extraction</span>
-          {pendingCandidates.length > 0 && (
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 font-bold">
-              {pendingCandidates.length}
-            </span>
-          )}
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setActiveTab('pending')}
+            className={`pb-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all relative ${
+              activeTab === 'pending'
+                ? 'border-amber-600 text-amber-700'
+                : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5 text-amber-600" />
+            <span>Pending AI Extraction</span>
+            {pendingCandidates.length > 0 && (
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 font-bold">
+                {pendingCandidates.length}
+              </span>
+            )}
+          </button>
+        )}
 
         <button
           onClick={() => setActiveTab('documents')}
@@ -214,6 +246,7 @@ export const BrandGuidelinesPage: React.FC = () => {
       {activeTab === 'approved' && (
         <ApprovedGuidelinesTab
           rules={approvedRules}
+          isAdmin={isAdmin}
           onAddRule={() => {
             setEditingRule(null)
             setEditingCandidateId(null)
@@ -228,8 +261,8 @@ export const BrandGuidelinesPage: React.FC = () => {
         />
       )}
 
-      {/* Tab 3: Pending AI Extraction */}
-      {activeTab === 'pending' && (
+      {/* Tab 3: Pending AI Extraction (Admin Only) */}
+      {activeTab === 'pending' && isAdmin && (
         <PendingExtractionTab
           candidates={pendingCandidates}
           onApproveCandidate={approveCandidateRule}
@@ -243,10 +276,11 @@ export const BrandGuidelinesPage: React.FC = () => {
       {activeTab === 'documents' && (
         <SourceDocumentsTab
           documents={sourceDocuments}
+          isAdmin={isAdmin}
           onUploadDocument={uploadSourceDocument}
           onUploadFile={uploadDocumentFile}
           onDeleteDocument={deleteSourceDocument}
-          onReExtract={() => {}}
+          onReExtract={reExtractDocument}
           onGoToPendingQueue={() => setActiveTab('pending')}
         />
       )}

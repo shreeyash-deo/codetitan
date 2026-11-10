@@ -67,24 +67,41 @@ export const ContentSubmissionPanel: React.FC<ContentSubmissionPanelProps> = ({
     'Other',
   ]
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0]
       setSelectedFile(file)
       if (!title) setTitle(file.name.replace(/\.[^/.]+$/, ''))
-      // If text/doc, mock reading it into the editor
-      setContent(`[Extracted from document: ${file.name}]\n\nBoost your e-commerce checkout conversions by 40% with NovaPay.\n\nThe world's fastest payment API is here, crushing legacy slow banks with sub-second clearing. NovaPay Billing Suite provides 100% zero fraud guaranteed for high-volume enterprise stores.`)
+      if (file.type.startsWith('text/') || file.name.endsWith('.txt')) {
+        try {
+          const text = await file.text()
+          setContent(text)
+        } catch {
+          setContent(`[Uploaded Document: ${file.name}]\n\n(Enter or paste your draft copy here for compliance audit)`)
+        }
+      } else {
+        setContent(`[Uploaded Document: ${file.name}]\n\n(Enter or paste your draft copy here for compliance audit)`)
+      }
     }
   }
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0]
       setSelectedFile(file)
       if (!title) setTitle(file.name.replace(/\.[^/.]+$/, ''))
-      setContent(`[Extracted from document: ${file.name}]\n\nBoost your e-commerce checkout conversions by 40% with NovaPay.\n\nThe world's fastest payment API is here, crushing legacy slow banks with sub-second clearing. NovaPay Billing Suite provides 100% zero fraud guaranteed for high-volume enterprise stores.`)
+      if (file.type.startsWith('text/') || file.name.endsWith('.txt')) {
+        try {
+          const text = await file.text()
+          setContent(text)
+        } catch {
+          setContent(`[Uploaded Document: ${file.name}]\n\n(Enter or paste your draft copy here for compliance audit)`)
+        }
+      } else {
+        setContent(`[Uploaded Document: ${file.name}]\n\n(Enter or paste your draft copy here for compliance audit)`)
+      }
     }
   }
 
@@ -134,7 +151,7 @@ export const ContentSubmissionPanel: React.FC<ContentSubmissionPanelProps> = ({
               Asset / Campaign Title
             </label>
             <Input
-              placeholder="e.g. Q4 Global Checkout Paid Ad Campaign"
+              placeholder="e.g. Q4 Product Launch Campaign"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="text-xs"

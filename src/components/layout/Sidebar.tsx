@@ -4,6 +4,7 @@ import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { NavItem } from './NavItem'
 import { UserProfileMenu } from './UserProfileMenu'
 import { mainNavigationItems } from '@/data/navigationConfig'
+import { useWorkspace } from '@/hooks/useWorkspace'
 import { useToast } from '@/context/ToastContext'
 import { PanelLeftClose, PanelLeft, Sparkles, HelpCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -20,6 +21,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onItemClick,
 }) => {
   const { info } = useToast()
+  const { currentWorkspace } = useWorkspace()
+  const isAdmin = (currentWorkspace?.role || '').toLowerCase() === 'admin'
+
+  const visibleNavItems = mainNavigationItems.filter((item) => {
+    if (item.id === 'settings' && !isAdmin) return false
+    return true
+  })
 
   return (
     <aside
@@ -63,7 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <nav className="space-y-1">
-          {mainNavigationItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <NavItem
               key={item.id}
               item={item}

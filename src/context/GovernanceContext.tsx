@@ -49,6 +49,7 @@ interface GovernanceContextValue {
   approveAllHighConfidenceCandidates: () => void
   uploadSourceDocument: (doc: SourceDocument) => Promise<void>
   uploadDocumentFile: (file: File) => Promise<void>
+  reExtractDocument: (docId: string) => Promise<void>
   deleteSourceDocument: (docId: string) => Promise<void>
 
   // Telemetry Metrics
@@ -477,6 +478,37 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }
 
+  const reExtractDocument = async (docId: string) => {
+    setIsLoading(true)
+    try {
+      const brandId = currentWorkspace?.id
+      const res = await guidelineService.reExtractDocument(docId, brandId)
+      // Refresh documents, pending candidates, and approved rules from backend
+      const [candidatesData, docsData, rulesData] = await Promise.all([
+        guidelineService.getPendingCandidates(brandId),
+        guidelineService.getSourceDocuments(brandId),
+        guidelineService.getApprovedRules(brandId),
+      ])
+      if (docsData && docsData.length > 0) {
+        setSourceDocuments(docsData as unknown as SourceDocument[])
+      }
+      if (candidatesData) {
+        setPendingCandidates(candidatesData as unknown as PendingCandidateRule[])
+      }
+      if (rulesData) {
+        setApprovedRules(rulesData as unknown as ApprovedRule[])
+      }
+      const count = res?.extractedCandidatesCount ?? 0
+      success(`Rule extraction complete: ${count} candidate rules queued for review!`, 'Extraction Successful')
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.detail || err?.message || 'Extraction failed'
+      setError(msg)
+      toastError(msg, 'Re-extraction Failed')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const deleteSourceDocument = async (docId: string) => {
     try {
       if (!apiClient.isMockMode()) {
@@ -538,6 +570,7 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         approveAllHighConfidenceCandidates,
         uploadSourceDocument,
         uploadDocumentFile,
+        reExtractDocument,
         deleteSourceDocument,
         metrics,
       }}

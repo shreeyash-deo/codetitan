@@ -2,6 +2,7 @@ import React from 'react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useWorkspace } from '@/hooks/useWorkspace'
 import type { StudioFinding } from '@/types/reviewStudio'
 import {
   X,
@@ -28,10 +29,12 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
   isOpen,
   onClose,
 }) => {
+  const { currentWorkspace } = useWorkspace()
   if (!isOpen) return null
 
   const resolvedCount = findings.filter(f => f.status === 'accepted' || f.status === 'manual').length
   const pendingCount = findings.filter(f => f.status === 'pending').length
+  const formattedDate = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
   const handleDownload = () => {
     alert(`BrandShield Compliance Audit Certificate exported for "${title}".`)
@@ -87,9 +90,9 @@ export const ExportReportModal: React.FC<ExportReportModalProps> = ({
             </div>
 
             <div className="grid grid-cols-3 gap-2 text-[11px] text-slate-600">
-              <div>Organization: <strong className="text-slate-900">NovaPay Global</strong></div>
+              <div>Organization: <strong className="text-slate-900">{currentWorkspace?.name || 'Organisation'}</strong></div>
               <div>Auditor: <strong className="text-slate-900">BrandShield Sentinel</strong></div>
-              <div>Timestamp: <strong className="text-slate-900">Nov 9, 2026</strong></div>
+              <div>Timestamp: <strong className="text-slate-900">{formattedDate}</strong></div>
             </div>
 
             <div className="pt-2 border-t border-slate-200 space-y-2">

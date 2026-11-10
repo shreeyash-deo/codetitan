@@ -21,6 +21,7 @@ export interface RegisterData {
   name: string
   email: string
   password: string
+  org_id?: string
 }
 
 export interface AuthTokenResponse {
@@ -69,11 +70,16 @@ export const authService = {
    * FastAPI Route: POST /api/v1/auth/register
    */
   async register(userData: RegisterData): Promise<UserProfile> {
-    await apiClient.post<any>('/api/v1/auth/register', {
+    const payload: Record<string, any> = {
       name: userData.name.trim(),
       email: userData.email.trim(),
       password: userData.password,
-    })
+    }
+    if (userData.org_id && userData.org_id.trim()) {
+      payload.org_id = userData.org_id.trim().toUpperCase()
+    }
+
+    await apiClient.post<any>('/api/v1/auth/register', payload)
 
     const loginRes = await this.login({
       email: userData.email.trim(),

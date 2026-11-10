@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { PageHeader } from '@/components/common/PageHeader'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
@@ -11,6 +12,7 @@ import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import {
   Shield,
+  ShieldAlert,
   Cpu,
   Save,
   Check,
@@ -44,6 +46,9 @@ export const SettingsPage: React.FC = () => {
   const { user } = useAuth()
   const { success, info } = useToast()
 
+  const userRole = (currentWorkspace?.role || 'employee').toLowerCase()
+  const isAdmin = userRole === 'admin'
+
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const [sensitivity, setSensitivity] = useState(85)
   const [autoReject, setAutoReject] = useState(true)
@@ -51,6 +56,27 @@ export const SettingsPage: React.FC = () => {
   const [strictnessLevel, setStrictnessLevel] = useState<'permissive' | 'standard' | 'strict'>('standard')
   const [saved, setSaved] = useState(false)
   const [copiedKey, setCopiedKey] = useState(false)
+
+  if (!isAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
+        <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center mb-4 shadow-sm">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <h2 className="text-xl font-bold text-slate-900">Administrator Access Required</h2>
+        <p className="text-sm text-slate-500 max-w-md mt-2 leading-relaxed">
+          Workspace settings, compliance tuning, API keys, and billing management are restricted to Organization Administrators. Your current role is <span className="font-semibold text-slate-800 capitalize">{userRole}</span>.
+        </p>
+        <div className="mt-6">
+          <Link to="/">
+            <Button variant="primaryBlue" size="sm">
+              Return to Overview
+            </Button>
+          </Link>
+        </div>
+      </div>
+    )
+  }
 
   // Webhook and integration states
   const [integrations, setIntegrations] = useState([

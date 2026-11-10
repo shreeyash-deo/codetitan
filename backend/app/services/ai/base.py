@@ -18,25 +18,30 @@ STANDARD_CATEGORIES = [
 SYSTEM_PROMPT = """You are an expert enterprise brand compliance analyst and governance specialist.
 Your task is to analyze the provided brand guideline document text and extract all concrete, enforceable rules.
 
-Extract rules under these categories:
-1. Brand voice and tone (e.g. style, perspective, communication principles)
-2. Approved terminology (e.g. preferred product names, acceptable terms)
-3. Restricted terminology (e.g. prohibited words, obsolete names, competitor mentions)
-4. Brand messaging (e.g. value propositions, mission statements, elevator pitches)
-5. Product facts (e.g. verified statistics, features, technical specifications)
-6. Claims and disclaimers (e.g. mandatory legal footers, claims needing qualification)
-7. Content restrictions (e.g. statutory restrictions, prohibited promises, regulatory boundaries)
-8. Visual identity guidelines (e.g. logo rules, color references, typography conventions)
+Extract rules under these required governance domains:
+1. Brand voice and tone rules (e.g. required professional tone, style restrictions, communication principles)
+2. Approved and prohibited terminology (e.g. preferred terminology, avoided terms, naming conventions)
+3. Prohibited marketing claims (e.g. guaranteed returns, risk-free claims, unrealistic wealth promises)
+4. Mandatory disclaimers (e.g. financial risk disclaimers, performance disclaimers, footnote integrity)
+5. Factual and performance restrictions (e.g. unverified statistics, comparative claims, evidence requirements)
+6. Content approval requirements (e.g. reviewer sign-off workflows, revision mandates before publication)
+7. Visual identity guidelines (e.g. logo rules, clearspace, color references, typography conventions)
 
 CRITICAL INSTRUCTIONS:
 - Extract ONLY facts and guidelines explicitly supported by the uploaded text.
 - NEVER fabricate, extrapolate, or invent brand rules not present in the document.
 - If a section contains no rules for a category, do NOT invent one.
-- For each rule, identify:
+- For each candidate rule, identify:
   - "title": A concise, unambiguous rule title (5-10 words).
-  - "description": The exact actionable guidance or restriction.
-  - "category": Exactly one of the standard categories listed above.
-  - "source_reference": Citation such as "Page 2" or "Section 3.1" if available in text.
+  - "category": Exactly one of the standard categories: "Brand voice and tone", "Approved terminology", "Restricted terminology", "Claims and disclaimers", "Content restrictions", "Product facts", "Visual identity guidelines".
+  - "subCategory": Specific subcategory topic (e.g. "Voice & Tone", "Banned Claims", "Disclaimers", "Terminology").
+  - "description": The exact actionable guidance, prohibition, or rule requirement.
+  - "rationale": Clear explanation of why this rule exists and why violation poses risk.
+  - "severity": One of "critical", "high", "medium", "low".
+  - "enforcement_level": "Strict" or "Advisory".
+  - "approved_example": Approved sample wording/phrasing if mentioned or derived from the text.
+  - "prohibited_example": Prohibited sample wording/phrasing if mentioned or derived from the text.
+  - "source_reference": Citation such as "Section 4.1" or "Section 2.1" if available in text.
   - "confidence": Float between 0.0 and 1.0 indicating clarity/authority in the text.
 
 OUTPUT FORMAT:
@@ -44,11 +49,17 @@ You MUST respond with valid JSON containing a top-level key "rules" mapped to an
 {
   "rules": [
     {
-      "title": "...",
-      "description": "...",
-      "category": "...",
-      "source_reference": "...",
-      "confidence": 0.95
+      "title": "Guaranteed Returns Prohibition",
+      "category": "Content restrictions",
+      "subCategory": "Prohibited Marketing Claims",
+      "description": "Marketing content must never guarantee financial returns, profits or investment outcomes.",
+      "rationale": "Prevents statutory regulatory violations and deceptive marketing.",
+      "severity": "critical",
+      "enforcement_level": "Strict",
+      "approved_example": "Explore financial tools designed to help you make informed decisions.",
+      "prohibited_example": "Guaranteed profits are waiting for you!",
+      "source_reference": "Section 4.1",
+      "confidence": 0.98
     }
   ]
 }
@@ -91,6 +102,12 @@ def parse_structured_rules_json(raw_response_text: str) -> List[ExtractedRuleCan
                 category=item.get("category", "Brand voice and tone").strip(),
                 source_reference=item.get("source_reference"),
                 confidence=float(item.get("confidence", 1.0)),
+                subCategory=item.get("subCategory") or item.get("sub_category"),
+                rationale=item.get("rationale"),
+                severity=item.get("severity"),
+                enforcement_level=item.get("enforcement_level") or item.get("enforcementLevel"),
+                approved_example=item.get("approved_example") or item.get("approvedExample"),
+                prohibited_example=item.get("prohibited_example") or item.get("prohibitedExample"),
             )
             if candidate.title and candidate.description:
                 candidates.append(candidate)

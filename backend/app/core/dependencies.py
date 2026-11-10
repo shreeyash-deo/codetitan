@@ -94,6 +94,11 @@ def get_workspace_member(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: You are not a member of this workspace",
         )
+    if getattr(member, "status", "approved") != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Your membership request for this organisation is pending approval.",
+        )
     return member
 
 

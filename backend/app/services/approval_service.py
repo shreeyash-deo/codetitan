@@ -68,6 +68,7 @@ class ApprovalService:
             comment=comment,
         )
         db.add(approval)
+        review.status = "pending"
 
         activity = ReviewActivity(
             review_id=review.id,
@@ -126,6 +127,7 @@ class ApprovalService:
             .filter(
                 WorkspaceMember.workspace_id == workspace_id,
                 WorkspaceMember.user_id == user.id,
+                WorkspaceMember.status == "approved",
             )
             .first()
         )
@@ -143,6 +145,7 @@ class ApprovalService:
             .filter(
                 WorkspaceMember.workspace_id == workspace_id,
                 WorkspaceMember.user_id == user.id,
+                WorkspaceMember.status == "approved",
             )
             .first()
         )

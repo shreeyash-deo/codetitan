@@ -59,6 +59,17 @@ def get_target_workspace_id(db: Session, current_user: User, explicit_id: Option
             detail="Ambiguous organisation context. User belongs to multiple organisations; please specify brand_id.",
         )
 
+    # Check if user has a pending join request:
+    pending_membership = db.query(WorkspaceMember).filter(
+        WorkspaceMember.user_id == current_user.id,
+        WorkspaceMember.status == "pending"
+    ).first()
+    if pending_membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Your organisation membership request is currently pending Admin approval.",
+        )
+
     # If user has no workspace yet, create a default workspace
     default_ws = Workspace(name="NovaPay Global", org_id=workspace_service.generate_org_id(db))
     db.add(default_ws)
@@ -73,7 +84,7 @@ def get_target_workspace_id(db: Session, current_user: User, explicit_id: Option
 
 def verify_workspace_admin_in_compat(db: Session, workspace_id: int, user_id: int):
     member = workspace_service.get_member(db, workspace_id, user_id)
-    if not member or member.role.lower() != "admin":
+    if not member or member.status != "approved" or member.role.lower() != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Operation not permitted. Required workspace role: Admin",
@@ -82,7 +93,7 @@ def verify_workspace_admin_in_compat(db: Session, workspace_id: int, user_id: in
 
 def verify_workspace_reviewer_or_admin_in_compat(db: Session, workspace_id: int, user_id: int):
     member = workspace_service.get_member(db, workspace_id, user_id)
-    if not member or member.role.lower() not in ("admin", "reviewer"):
+    if not member or member.status != "approved" or member.role.lower() not in ("admin", "reviewer"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Operation not permitted. Required workspace role: Reviewer or Admin",
@@ -100,6 +111,14 @@ def list_brands(
 ):
     workspaces = workspace_service.list_workspaces_for_user(db, current_user)
     if not workspaces:
+        # Check if user has a pending join request:
+        pending_membership = db.query(WorkspaceMember).filter(
+            WorkspaceMember.user_id == current_user.id,
+            WorkspaceMember.status == "pending"
+        ).first()
+        if pending_membership:
+            return []
+
         ws_id = get_target_workspace_id(db, current_user)
         workspaces = [workspace_service.get_by_id(db, ws_id)]
 
@@ -385,7 +404,7 @@ def get_source_documents(
     current_user: User = Depends(get_current_user),
 ):
     ws_id = get_target_workspace_id(db, current_user, brand_id)
-    docs = db.query(GuidelineDocument).filter(GuidelineDocument.workspace_id == ws_id).order_by(GuidelineDocument.created_at.desc()).all()
+    docs = db.query(GuidelineDocument).filter(GuidelineDocument.workspace_id == ws_id).order_by(GuidelineDocument.uploaded_at.desc()).all()
     results = []
     for d in docs:
         cand_count = db.query(BrandRule).filter(BrandRule.document_id == d.id, BrandRule.approval_status == "pending").count()
@@ -447,7 +466,8 @@ async def upload_brand_document(
 
     # Automatically extract brand rules from the document text
     extracted_candidates = []
-    if doc.extracted_text:
+    extraction_status = "extracted"
+    if doc.extracted_text and doc.extracted_text.strip():
         try:
             from app.services.ai.ai_service import ai_service
             candidates = ai_service.extract_rules_from_text(doc.extracted_text)
@@ -457,8 +477,18 @@ async def upload_brand_document(
                 document_id=doc.id,
                 candidates=candidates,
             )
-        except Exception:
-            extracted_candidates = []
+            doc.status = "extracted"
+            db.commit()
+        except Exception as exc:
+            import logging
+            logging.getLogger("brandshield.compat").error(f"Rule extraction failed for {doc.filename}: {exc}")
+            extraction_status = "failed"
+            doc.status = "failed"
+            db.commit()
+    else:
+        extraction_status = "empty"
+        doc.status = "empty"
+        db.commit()
 
     # Record governance activity
     db.add(ReviewActivity(
@@ -477,9 +507,63 @@ async def upload_brand_document(
         "pages": 12,
         "uploadedAt": "Today",
         "uploadedBy": current_user.name,
-        "status": "extracted",
+        "status": extraction_status,
         "extractedCandidatesCount": len(extracted_candidates),
         "approvedRulesCount": 0,
+    }
+
+
+@router.post("/guidelines/documents/{document_id}/re-extract", summary="Re-extract rules from an existing document")
+def re_extract_brand_document(
+    document_id: str,
+    brand_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        doc_id = int(document_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid document ID")
+
+    doc = db.query(GuidelineDocument).filter(GuidelineDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Guideline document not found")
+
+    verify_workspace_admin_in_compat(db, doc.workspace_id, current_user.id)
+
+    if not doc.extracted_text or not doc.extracted_text.strip():
+        raise HTTPException(status_code=400, detail="Document text is empty. Cannot extract rules.")
+
+    from app.services.ai.ai_service import ai_service
+    try:
+        candidates = ai_service.extract_rules_from_text(doc.extracted_text)
+        created_rules = rule_service.save_extracted_rules(
+            db=db,
+            workspace_id=doc.workspace_id,
+            document_id=doc.id,
+            candidates=candidates,
+        )
+        doc.status = "extracted"
+        db.commit()
+    except Exception as exc:
+        doc.status = "failed"
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Rule extraction failed: {str(exc)}")
+
+    # Record governance activity
+    db.add(ReviewActivity(
+        workspace_id=doc.workspace_id,
+        user_id=current_user.id,
+        action="Guideline Re-extracted",
+        details=f"Re-extracted candidate rules for '{doc.filename}': {len(created_rules)} candidate rules queued.",
+    ))
+    db.commit()
+
+    return {
+        "document_id": str(doc.id),
+        "filename": doc.filename,
+        "extractedCandidatesCount": len(created_rules),
+        "status": doc.status,
     }
 
 
@@ -518,10 +602,20 @@ def scan_content(
             submission=submission,
         )
     except NoApprovedRulesError as err:
-        raise HTTPException(
-            status_code=400,
-            detail=str(err),
-        )
+        return {
+            "id": "rules-unavailable",
+            "title": title,
+            "contentType": content_type,
+            "channel": channel,
+            "overallScore": 0,
+            "issuesCount": 0,
+            "status": "rules_unavailable",
+            "hasApprovedRules": False,
+            "summary": "Brand rules unavailable / Incomplete audit: No approved brand rules found in this organisation. Please approve brand rules in Brand Guidelines before scanning.",
+            "contentPreview": content[:160] + ("..." if len(content) > 160 else ""),
+            "findings": [],
+            "analyzedAt": datetime.now(timezone.utc).isoformat(),
+        }
     except Exception as exc:
         raise HTTPException(
             status_code=500,
@@ -552,6 +646,7 @@ def scan_content(
         "overallScore": review.compliance_score,
         "issuesCount": len(frontend_findings),
         "status": "flagged" if review.compliance_score < 80 else "approved",
+        "hasApprovedRules": True,
         "summary": review.summary or f"Automated audit completed. Score: {review.compliance_score}/100.",
         "contentPreview": review.content[:160] + ("..." if len(review.content) > 160 else ""),
         "findings": frontend_findings,

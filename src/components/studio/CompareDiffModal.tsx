@@ -118,7 +118,7 @@ export const CompareDiffModal: React.FC<CompareDiffModalProps> = ({
           {/* Footer Actions */}
           <div className="flex items-center justify-between pt-3 border-t border-border">
             <span className="text-xs text-slate-500">
-              Compliant copy meets all 4 active NovaPay regulatory rules.
+              Compliant copy remediates all identified brand and regulatory findings.
             </span>
             <Button variant="primaryBlue" size="sm" onClick={onClose}>
               Return to Studio

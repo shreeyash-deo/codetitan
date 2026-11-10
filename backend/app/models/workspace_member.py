@@ -22,6 +22,7 @@ class WorkspaceMember(Base):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     role: Mapped[str] = mapped_column(String(50), default="Employee", nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="approved", nullable=False)  # "pending", "approved"
 
     # Relationships
     workspace: Mapped["Workspace"] = relationship("Workspace", back_populates="members")

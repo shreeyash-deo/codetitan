@@ -23,6 +23,7 @@ interface ApprovedGuidelinesTabProps {
   onAddRule: () => void
   onEditRule: (rule: ApprovedRule) => void
   onDeleteRule: (ruleId: string) => void
+  isAdmin?: boolean
 }
 
 const categoriesList: { id: 'all' | GuidelineCategory; label: string; countBadge?: number }[] = [
@@ -39,6 +40,7 @@ export const ApprovedGuidelinesTab: React.FC<ApprovedGuidelinesTabProps> = ({
   onAddRule,
   onEditRule,
   onDeleteRule,
+  isAdmin = true,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<'all' | GuidelineCategory>('all')
   const [searchQuery, setSearchQuery] = useState('')
@@ -102,15 +104,17 @@ export const ApprovedGuidelinesTab: React.FC<ApprovedGuidelinesTabProps> = ({
             />
           </div>
 
-          <Button
-            variant="primaryBlue"
-            size="sm"
-            className="gap-1.5 text-xs font-semibold shrink-0"
-            onClick={onAddRule}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add Rule</span>
-          </Button>
+          {isAdmin && (
+            <Button
+              variant="primaryBlue"
+              size="sm"
+              className="gap-1.5 text-xs font-semibold shrink-0 cursor-pointer"
+              onClick={onAddRule}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Rule</span>
+            </Button>
+          )}
         </div>
       </div>
 
@@ -221,30 +225,32 @@ export const ApprovedGuidelinesTab: React.FC<ApprovedGuidelinesTabProps> = ({
                   </span>
                 </div>
 
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="text-slate-400 hover:text-slate-800"
-                    title="Edit Rule"
-                    onClick={() => onEditRule(rule)}
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="text-slate-400 hover:text-rose-600"
-                    title="Delete Rule"
-                    onClick={() => {
-                      if (confirm(`Are you sure you want to delete rule ${rule.code}: "${rule.title}"?`)) {
-                        onDeleteRule(rule.id)
-                      }
-                    }}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
+                {isAdmin && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-slate-400 hover:text-slate-800 cursor-pointer"
+                      title="Edit Rule"
+                      onClick={() => onEditRule(rule)}
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-slate-400 hover:text-rose-600 cursor-pointer"
+                      title="Delete Rule"
+                      onClick={() => {
+                        if (confirm(`Are you sure you want to delete rule ${rule.code}: "${rule.title}"?`)) {
+                          onDeleteRule(rule.id)
+                        }
+                      }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                )}
               </div>
             </Card>
           ))}

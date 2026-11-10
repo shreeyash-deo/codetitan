@@ -12,6 +12,13 @@ import {
   Check,
 } from 'lucide-react'
 
+export interface LinkedGuidelineItem {
+  id: string
+  name: string
+  count: number
+  desc?: string
+}
+
 interface ReviewConfigPanelProps {
   activeCategories: StudioCategory[]
   toggleCategory: (cat: StudioCategory) => void
@@ -22,14 +29,10 @@ interface ReviewConfigPanelProps {
   contentLength: number
   wordCount: number
   status: 'ready' | 'analyzing' | 'completed'
+  linkedGuidelines?: LinkedGuidelineItem[]
+  totalRulesCount?: number
+  isLoadingGuidelines?: boolean
 }
-
-const availableGuidelines = [
-  { id: 'bg-identity', name: 'NovaPay Master Identity v2.4', count: 18, desc: 'Logo isolation, marks, and approved palettes' },
-  { id: 'bg-voice', name: 'Tone of Voice & Lexicon Rules', count: 24, desc: 'Institutional dignity, banned buzzwords' },
-  { id: 'bg-statutory', name: 'Statutory Claims & Disclaimers', count: 12, desc: 'FCA & FTC advertising disclosures' },
-  { id: 'bg-risk', name: 'Product Warranties & Fraud Terms', count: 9, desc: 'SLA guarantees, liability boundaries' },
-]
 
 const availableCategories: { id: StudioCategory; label: string; desc: string }[] = [
   { id: 'Tone inconsistency', label: 'Tone inconsistency', desc: 'Detects colloquial or aggressive rhetoric' },
@@ -49,6 +52,9 @@ export const ReviewConfigPanel: React.FC<ReviewConfigPanelProps> = ({
   contentLength,
   wordCount,
   status,
+  linkedGuidelines = [],
+  totalRulesCount = 0,
+  isLoadingGuidelines = false,
 }) => {
   return (
     <Card className="h-full border-border/80 shadow-xs flex flex-col justify-between">
@@ -60,7 +66,7 @@ export const ReviewConfigPanel: React.FC<ReviewConfigPanelProps> = ({
               <span>Review Configuration</span>
             </CardTitle>
             <CardDescription className="text-xs text-slate-500 mt-0.5">
-              Customize enforcement criteria and active vector rules
+              Customize enforcement criteria and active brand rules
             </CardDescription>
           </div>
 
@@ -149,7 +155,7 @@ export const ReviewConfigPanel: React.FC<ReviewConfigPanelProps> = ({
                     type="checkbox"
                     checked={isChecked}
                     onChange={() => {}}
-                    className="h-3.5 w-3.5 mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    className="h-3.5 w-3.5 mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                   />
                 </div>
               )
@@ -161,35 +167,49 @@ export const ReviewConfigPanel: React.FC<ReviewConfigPanelProps> = ({
         <div className="space-y-2 pt-1 border-t border-border/60">
           <label className="text-xs font-semibold text-slate-800 flex items-center justify-between">
             <span>Linked Brand Knowledge</span>
-            <span className="text-[11px] text-emerald-600 font-medium">
-              412 vectors indexed
+            <span className="text-[11px] text-blue-600 font-medium font-mono">
+              {totalRulesCount > 0 ? `${totalRulesCount} rules active` : '0 rules active'}
             </span>
           </label>
 
-          <div className="space-y-1.5">
-            {availableGuidelines.map((gl) => {
-              const isChecked = activeGuidelines.includes(gl.id)
-              return (
-                <div
-                  key={gl.id}
-                  onClick={() => toggleGuideline(gl.id)}
-                  className={`flex items-center justify-between p-2 rounded-md border text-xs cursor-pointer select-none transition-colors ${
-                    isChecked
-                      ? 'border-blue-200 bg-blue-50/40 text-blue-950'
-                      : 'border-slate-100 bg-white text-slate-600 opacity-60'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 truncate pr-2">
-                    <BookOpen className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                    <span className="font-medium truncate">{gl.name}</span>
+          {isLoadingGuidelines ? (
+            <div className="p-3 text-center text-xs text-slate-400">
+              Loading active brand guidelines...
+            </div>
+          ) : linkedGuidelines.length === 0 ? (
+            <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200/80 text-center text-xs text-slate-500 space-y-1">
+              <BookOpen className="w-4 h-4 text-slate-400 mx-auto mb-0.5" />
+              <span className="font-semibold text-slate-700 block text-xs">No Guidelines Linked</span>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                No approved brand guidelines found in this organisation. Upload guidelines in Brand Memory Studio to enable automated rule checking.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {linkedGuidelines.map((gl) => {
+                const isChecked = activeGuidelines.includes(gl.id) || activeGuidelines.length === 0
+                return (
+                  <div
+                    key={gl.id}
+                    onClick={() => toggleGuideline(gl.id)}
+                    className={`flex items-center justify-between p-2 rounded-md border text-xs cursor-pointer select-none transition-colors ${
+                      isChecked
+                        ? 'border-blue-200 bg-blue-50/40 text-blue-950'
+                        : 'border-slate-100 bg-white text-slate-600 opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate pr-2 min-w-0">
+                      <BookOpen className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                      <span className="font-medium truncate">{gl.name}</span>
+                    </div>
+                    <Badge variant="neutral" className="text-[10px] shrink-0 font-mono">
+                      {gl.count} {gl.count === 1 ? 'rule' : 'rules'}
+                    </Badge>
                   </div>
-                  <Badge variant="neutral" className="text-[10px] shrink-0 font-mono">
-                    {gl.count} rules
-                  </Badge>
-                </div>
-              )
-            })}
-          </div>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* Document Stats / Telemetry */}
@@ -202,13 +222,13 @@ export const ReviewConfigPanel: React.FC<ReviewConfigPanelProps> = ({
               <span className="text-slate-400">Word Count:</span> {wordCount}
             </div>
             <div>
-              <span className="text-slate-400">Tokens:</span> ~{Math.ceil(contentLength / 4)}
+              <span className="text-slate-400">Characters:</span> {contentLength}
             </div>
             <div>
-              <span className="text-slate-400">Language:</span> EN-US (Financial)
+              <span className="text-slate-400">Language:</span> EN-US
             </div>
             <div>
-              <span className="text-slate-400">Est. Latency:</span> &lt;1.8s
+              <span className="text-slate-400">AI Guardrails:</span> Active
             </div>
           </div>
         </div>

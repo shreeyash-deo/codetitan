@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useWorkspace } from '@/hooks/useWorkspace'
@@ -47,15 +47,14 @@ export const ContentReviewPage: React.FC = () => {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { currentWorkspace } = useWorkspace()
-  const { addReview, refreshData } = useGovernance()
+  const { approvedRules, sourceDocuments, addReview, refreshData, isLoading: isLoadingGovernance } = useGovernance()
   const { success, warning, info, error: toastError } = useToast()
 
-  // Workspace configuration state
-  const defaultPreset = studioPresets[0]
-  const [title, setTitle] = useState(defaultPreset.title)
-  const [contentType, setContentType] = useState<StudioContentType>(defaultPreset.contentType)
-  const [content, setContent] = useState(defaultPreset.rawContent)
-  const [originalContent, setOriginalContent] = useState(defaultPreset.rawContent)
+  // Clean, non-prepopulated editor state
+  const [title, setTitle] = useState('')
+  const [contentType, setContentType] = useState<StudioContentType>('Social media')
+  const [content, setContent] = useState('')
+  const [originalContent, setOriginalContent] = useState('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
 
   // Real API integration state
@@ -73,16 +72,11 @@ export const ContentReviewPage: React.FC = () => {
     'Incorrect product facts',
     'Visual brand inconsistency',
   ])
-  const [activeGuidelines, setActiveGuidelines] = useState<string[]>([
-    'bg-identity',
-    'bg-voice',
-    'bg-statutory',
-    'bg-risk',
-  ])
+  const [activeGuidelines, setActiveGuidelines] = useState<string[]>([])
 
   // Studio Flow State: 'idle' | 'analyzing' | 'results'
   const [studioState, setStudioState] = useState<'idle' | 'analyzing' | 'results'>('idle')
-  const [findings, setFindings] = useState<StudioFinding[]>(defaultPreset.findings)
+  const [findings, setFindings] = useState<StudioFinding[]>([])
   const [selectedGuideline, setSelectedGuideline] = useState<SupportingGuideline | null>(null)
   const [isGuidelineDrawerOpen, setIsGuidelineDrawerOpen] = useState(false)
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false)
@@ -90,6 +84,37 @@ export const ContentReviewPage: React.FC = () => {
   const [selectedFilterCategory, setSelectedFilterCategory] = useState<string>('all')
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null)
   const [isDirectEditing, setIsDirectEditing] = useState(false)
+
+  // Real linked guidelines derived strictly from the active organization's approved knowledge base
+  const linkedGuidelines = useMemo(() => {
+    if (sourceDocuments && sourceDocuments.length > 0) {
+      return sourceDocuments.map((doc) => ({
+        id: `doc-${doc.id}`,
+        name: doc.name,
+        count: doc.approvedRulesCount || 0,
+        desc: `${doc.format || 'Document'} guideline source`,
+      }))
+    }
+    if (approvedRules && approvedRules.length > 0) {
+      const categoryMap = new Map<string, number>()
+      for (const r of approvedRules) {
+        const cat = r.category || 'General'
+        categoryMap.set(cat, (categoryMap.get(cat) || 0) + 1)
+      }
+      return Array.from(categoryMap.entries()).map(([cat, count]) => ({
+        id: `cat-${cat.toLowerCase().replace(/\s+/g, '-')}`,
+        name: cat,
+        count,
+        desc: 'Official active ruleset',
+      }))
+    }
+    return []
+  }, [sourceDocuments, approvedRules])
+
+  // Ensure latest approved rules & telemetry are loaded for current workspace
+  useEffect(() => {
+    refreshData()
+  }, [currentWorkspace?.id, refreshData])
 
   // Load Preset
   const handleSelectPreset = (presetId: string) => {
@@ -109,7 +134,10 @@ export const ContentReviewPage: React.FC = () => {
   // Run Brand Review
   const handleRunReview = async () => {
     if (!content.trim()) return
-    setOriginalContent(content)
+    // Preserve immutable original submission on first run; do not overwrite on recheck
+    if (!originalContent) {
+      setOriginalContent(content)
+    }
 
     if (apiClient.isMockMode()) {
       setStudioState('analyzing')
@@ -131,6 +159,16 @@ export const ContentReviewPage: React.FC = () => {
       setActiveReviewId(result.id)
       setRealBackendScore(result.overallScore)
       setRealSummary(result.summary)
+
+      if (result.status === 'rules_unavailable' || result.hasApprovedRules === false) {
+        setFindings([])
+        setStudioState('results')
+        warning(
+          result.summary || 'Brand rules unavailable in this organisation. Please approve brand rules before auditing.',
+          'Incomplete Audit'
+        )
+        return
+      }
 
       const mappedFindings: StudioFinding[] = (result.findings || []).map((f) => ({
         id: f.id,
@@ -174,11 +212,15 @@ export const ContentReviewPage: React.FC = () => {
     const target = findings.find(f => f.id === findingId)
     if (!target) return
 
-    const replacement = target.manualReplacement || target.suggestedCorrection
+    const replacement = target.manualReplacement || target.suggestedCorrection || ''
 
     setContent(prev => {
-      if (prev.includes(target.originalText)) {
+      if (target.originalText && prev.includes(target.originalText)) {
         return prev.replace(target.originalText, replacement)
+      }
+      if (replacement.startsWith('\n\nDisclaimer:') || target.originalText === '[Missing Regulatory Disclaimer]') {
+        const toAppend = replacement.startsWith('\n\n') ? replacement : '\n\n' + replacement
+        return prev.trimEnd() + toAppend
       }
       return prev
     })
@@ -188,6 +230,37 @@ export const ContentReviewPage: React.FC = () => {
     )
 
     success(`Accepted correction for "${target.category}". Score updated.`, 'Correction Applied')
+  }
+
+  // Batch Accept All Suggestions cleanly without toast loops or state corruption
+  const handleAcceptAllSuggestions = () => {
+    const pendingToApply = findings.filter(f => f.status === 'pending')
+    if (pendingToApply.length === 0) return
+
+    setContent(prev => {
+      let updated = prev
+      let disclaimerToAppend = ''
+
+      for (const f of pendingToApply) {
+        const repl = f.manualReplacement || f.suggestedCorrection || ''
+        if (f.originalText && updated.includes(f.originalText)) {
+          updated = updated.replace(f.originalText, repl)
+        } else if (repl.startsWith('\n\nDisclaimer:') || f.originalText === '[Missing Regulatory Disclaimer]') {
+          disclaimerToAppend = repl.startsWith('\n\n') ? repl : '\n\n' + repl
+        }
+      }
+
+      if (disclaimerToAppend && !updated.includes('Disclaimer:')) {
+        updated = updated.trimEnd() + disclaimerToAppend
+      }
+      return updated
+    })
+
+    setFindings(prev =>
+      prev.map(f => (f.status === 'pending' ? { ...f, status: 'accepted' } : f))
+    )
+
+    success(`Accepted ${pendingToApply.length} suggestions across draft. Compliance score updated to 100/100.`, 'All Corrections Applied')
   }
 
   const handleRejectSuggestion = (findingId: string) => {
@@ -230,9 +303,20 @@ export const ContentReviewPage: React.FC = () => {
   const rejectedCount = findings.filter(f => f.status === 'rejected').length
   const pendingCount = findings.filter(f => f.status === 'pending').length
 
-  const baselineScore = realBackendScore !== null ? realBackendScore : 64
+  // Authoritative rules availability:
+  // In results mode, use the backend audit verdict (never false-flag if findings exist).
+  // In idle mode, check whether the workspace has approved guidelines loaded.
+  const isRulesUnavailable = studioState === 'results'
+    ? Boolean(realSummary && realSummary.toLowerCase().includes('rules unavailable'))
+    : (!isLoadingGovernance && approvedRules !== undefined && approvedRules.length === 0)
+
+  // Authoritative baseline score from backend; if 0 findings on clean draft, baseline is 100
+  const baselineScore = isRulesUnavailable
+    ? 0
+    : (realBackendScore !== null ? realBackendScore : (totalFindings === 0 ? 100 : 64))
+
   const scoreBoost = totalFindings > 0 ? Math.round((acceptedCount / totalFindings) * (100 - baselineScore)) : 0
-  const currentScore = Math.min(100, baselineScore + scoreBoost)
+  const currentScore = isRulesUnavailable ? 0 : Math.min(100, baselineScore + scoreBoost)
 
   // Severity counts
   const criticalCount = findings.filter(f => f.severity === 'critical' && f.status === 'pending').length
@@ -551,17 +635,50 @@ export const ContentReviewPage: React.FC = () => {
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleSelectPreset('preset-ad-campaign')}
-              >
-                Reset Default Preset
-              </Button>
+              {content && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setTitle('')
+                    setContent('')
+                    setOriginalContent('')
+                    setFindings([])
+                    setSelectedFile(null)
+                  }}
+                  className="text-xs"
+                >
+                  Clear Draft
+                </Button>
+              )}
             </div>
           )
         }
       />
+
+      {/* Brand Rules Unavailable Warning Banner */}
+      {isRulesUnavailable && (
+        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <h4 className="font-semibold text-sm">Brand Rules Unavailable — Incomplete Audit</h4>
+              <p className="text-xs text-amber-800 mt-0.5">
+                Brand compliance cannot be evaluated because this organisation has no approved brand rules. Approved rules are required to establish a compliance baseline.
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs bg-white border-amber-300 text-amber-900 hover:bg-amber-100 shrink-0 gap-1"
+            onClick={() => navigate('/brand-guidelines')}
+          >
+            <span>Brand Guidelines</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      )}
 
       {/* STUDIO MODE 1: SUBMISSION & CONFIGURATION */}
       {studioState === 'idle' && (
@@ -602,6 +719,9 @@ export const ContentReviewPage: React.FC = () => {
               contentLength={content.length}
               wordCount={content.trim() ? content.trim().split(/\s+/).length : 0}
               status="ready"
+              linkedGuidelines={linkedGuidelines}
+              totalRulesCount={approvedRules?.length || 0}
+              isLoadingGuidelines={isLoadingGovernance}
             />
           </div>
         </div>
@@ -626,20 +746,23 @@ export const ContentReviewPage: React.FC = () => {
                   {title}
                 </h2>
                 <p className="text-xs text-slate-300">
-                  {acceptedCount > 0
-                    ? `Remediated ${acceptedCount} of ${totalFindings} findings. Current score: ${currentScore}/100.`
-                    : `${findings.length} findings require review before publication.`}
+                  {isRulesUnavailable
+                    ? 'Brand rules unavailable. Please approve brand rules in Brand Guidelines to run compliance audits.'
+                    : (acceptedCount > 0
+                        ? `Remediated ${acceptedCount} of ${totalFindings} findings. Current score: ${currentScore}/100.`
+                        : `${findings.length} findings require review before publication.`)}
                 </p>
               </div>
 
               {/* Score Display & Metric Pills */}
               <div className="flex items-center gap-4 shrink-0">
                 <div className="flex flex-col bg-slate-950/60 border border-white/10 rounded-lg p-3 text-center min-w-[90px]">
-                  <span className={`text-2xl font-extrabold ${currentScore >= 90 ? 'text-emerald-400' : 'text-blue-400'}`}>
-                    {currentScore}<span className="text-xs text-slate-400 font-normal">/100</span>
+                  <span className={`text-2xl font-extrabold ${isRulesUnavailable ? 'text-amber-400' : (currentScore >= 90 ? 'text-emerald-400' : 'text-blue-400')}`}>
+                    {isRulesUnavailable ? 'N/A' : currentScore}
+                    {!isRulesUnavailable && <span className="text-xs text-slate-400 font-normal">/100</span>}
                   </span>
                   <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
-                    Score
+                    {isRulesUnavailable ? 'Incomplete' : 'Score'}
                   </span>
                 </div>
 
@@ -811,11 +934,8 @@ export const ContentReviewPage: React.FC = () => {
                   variant="ghost"
                   size="sm"
                   className="text-xs h-7 text-blue-600 hover:text-blue-800"
-                  onClick={() => {
-                    findings.forEach(f => {
-                      if (f.status === 'pending') handleAcceptSuggestion(f.id)
-                    })
-                  }}
+                  onClick={handleAcceptAllSuggestions}
+                  disabled={pendingCount === 0}
                 >
                   Accept All ({pendingCount})
                 </Button>
@@ -905,6 +1025,7 @@ export const ContentReviewPage: React.FC = () => {
       <AnalysisProgressOverlay
         isOpen={apiClient.isMockMode() && studioState === 'analyzing'}
         onComplete={handleAnalysisComplete}
+        workspaceName={currentWorkspace?.name}
       />
 
       {/* Guideline Inspector Drawer */}

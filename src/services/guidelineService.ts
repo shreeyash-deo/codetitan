@@ -222,4 +222,17 @@ export const guidelineService = {
       params: { brand_id: brandId },
     })
   },
+
+  /**
+   * Re-extract rules from an already uploaded guideline document
+   * FastAPI Route: POST /api/v1/guidelines/documents/{id}/re-extract
+   */
+  async reExtractDocument(docId: string, brandId?: string): Promise<{ extractedCandidatesCount: number }> {
+    if (apiClient.isMockMode()) {
+      return { extractedCandidatesCount: 3 }
+    }
+    return apiClient.post(`/api/v1/guidelines/documents/${docId}/re-extract`, {}, {
+      params: { brand_id: brandId },
+    })
+  },
 }

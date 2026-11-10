@@ -238,6 +238,10 @@ class ReviewService:
 
         if original_excerpt in review.content:
             review.content = review.content.replace(original_excerpt, replacement, 1)
+        elif original_excerpt == "[Missing Regulatory Disclaimer]" or "disclaimer" in finding.category.lower():
+            to_append = replacement if replacement.startswith("\n\n") else f"\n\n{replacement}"
+            if "disclaimer:" not in review.content.lower():
+                review.content = review.content.rstrip() + to_append
         else:
             # Case-insensitive replacement fallback
             import re

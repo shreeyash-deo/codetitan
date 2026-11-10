@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from typing import List, Tuple, Dict, Any, Optional
 import httpx
@@ -8,6 +9,8 @@ from app.core.config import settings
 from app.models.rule import BrandRule
 from app.schemas.finding import FindingCreate
 from app.services.ai.gemini_client import gemini_client, redact_sensitive
+
+logger = logging.getLogger("brandshield.compliance.ai")
 
 
 class AIFindingCandidate(BaseModel):
@@ -73,6 +76,46 @@ class AIChecker:
                 + (f" (Ref: {r.source_reference})" if r.source_reference else "")
             )
         return "\n".join(lines)
+
+    @classmethod
+    def resolve_rule_reference(
+        cls, ref: str, approved_rules: List[BrandRule]
+    ) -> Optional[BrandRule]:
+        """
+        Grounding resolver: maps a guideline reference output from AI to an actual
+        approved BrandRule in the workspace. Rejects hallucinated rules that don't exist.
+        """
+        if not ref or not ref.strip():
+            return None
+
+        ref_clean = ref.strip().lower()
+
+        # 1. Direct Rule ID match: "Rule #7", "Rule 7", "#7"
+        id_match = re.search(r"(?:rule\s*#?|#)\s*(\d+)", ref, re.IGNORECASE)
+        if id_match:
+            r_id = int(id_match.group(1))
+            for r in approved_rules:
+                if r.id == r_id:
+                    return r
+
+        # 2. Exact or clean title match
+        for r in approved_rules:
+            r_title_l = r.title.lower()
+            if r_title_l == ref_clean or r_title_l in ref_clean:
+                return r
+
+        # 3. Rule Code match (e.g. NP-COMP-001, NP-COMP-004, NP-DISC-001, CR-04)
+        code_match = re.search(r"\b([A-Z]{2,4}-[A-Z0-9]+(?:-\d+)?)\b", ref, re.IGNORECASE)
+        if code_match:
+            target_code = code_match.group(1).lower()
+            for r in approved_rules:
+                r_desc_l = (r.description or "").lower()
+                r_title_l = (r.title or "").lower()
+                r_ref_l = (getattr(r, "source_reference", None) or "").lower()
+                if target_code in r_desc_l or target_code in r_title_l or target_code in r_ref_l:
+                    return r
+
+        return None
 
     @classmethod
     def call_gemini(cls, content: str, content_type: str, rules_text: str) -> str:
@@ -158,10 +201,16 @@ class AIChecker:
             else settings.active_gemini_api_key
         )
         if not active_key:
+            logger.info("AI semantic analysis skipped: no API key configured.")
             return (
                 "AI semantic analysis unavailable (no API key configured); deterministic compliance checks completed.",
                 [],
             )
+
+        logger.info(
+            f"AI evaluation initiated: provider={provider_name}, "
+            f"content_len={len(content)}, approved_rules_count={len(approved_rules)}"
+        )
 
         try:
             if provider_name == "deepseek":
@@ -171,6 +220,7 @@ class AIChecker:
         except Exception as exc:
             # Fallback gracefully to deterministic checks if AI provider is unavailable
             error_snippet = redact_sensitive(str(exc))[:60]
+            logger.warning(f"AI provider failed ({error_snippet}), falling back to deterministic.")
             return (
                 f"AI semantic analysis unavailable ({error_snippet}); deterministic compliance checks completed.",
                 [],
@@ -191,11 +241,13 @@ class AIChecker:
                 try:
                     data = json.loads(match.group(0))
                 except Exception:
+                    logger.error("AI response failed JSON fallback extraction.")
                     return (
                         "AI semantic analysis unavailable (invalid JSON response); deterministic compliance checks completed.",
                         [],
                     )
             else:
+                logger.error("AI response contained no JSON object.")
                 return (
                     "AI semantic analysis unavailable (malformed response); deterministic compliance checks completed.",
                     [],
@@ -203,58 +255,77 @@ class AIChecker:
 
         try:
             parsed_resp = AIComplianceResponse(**data)
-        except Exception:
+        except Exception as p_err:
+            logger.error(f"AI response failed schema validation: {p_err}")
             return (
                 "AI semantic analysis unavailable (schema validation failed); deterministic compliance checks completed.",
                 [],
             )
 
-        # Build approved rule lookup to verify guideline references
-        rule_id_map = {r.id: r for r in approved_rules}
+        logger.info(f"AI response parsed: received {len(parsed_resp.findings)} candidate findings.")
+
+        # Normalize content for search (normalize smart quotes)
+        normalized_content = content.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
 
         validated_findings: List[FindingCreate] = []
+        discarded_count = 0
+
         for candidate in parsed_resp.findings:
-            # 1. Verify excerpt is actually present in submitted content
-            excerpt = candidate.excerpt.strip()
-            if not excerpt or excerpt.lower() not in content.lower():
-                # Discard hallucinated excerpt that doesn't exist in content
+            # 1. Clean excerpt of any surrounding quotes
+            raw_excerpt = candidate.excerpt.strip().strip('"\'')
+            if not raw_excerpt:
+                discarded_count += 1
                 continue
 
-            # Exact case preservation from content
-            match = re.search(re.escape(excerpt), content, re.IGNORECASE)
-            actual_excerpt = content[match.start() : match.end()] if match else excerpt
+            # Verify excerpt exists in content
+            norm_excerpt = raw_excerpt.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+            if raw_excerpt.lower() not in content.lower() and norm_excerpt.lower() not in normalized_content.lower():
+                logger.debug(f"Discarding candidate with ungrounded excerpt: '{raw_excerpt[:40]}'")
+                discarded_count += 1
+                continue
+
+            # Exact case slice from content
+            match = re.search(re.escape(raw_excerpt), content, re.IGNORECASE)
+            if not match:
+                match = re.search(re.escape(norm_excerpt), normalized_content, re.IGNORECASE)
+            actual_excerpt = content[match.start() : match.end()] if match else raw_excerpt
 
             # 2. Normalize severity
             sev = candidate.severity.lower().strip()
             if sev not in ("critical", "major", "minor", "suggestion"):
                 sev = "minor"
 
-            # 3. Grounding enforcement: Verify guideline reference cites an approved rule ID
-            ref = candidate.guideline_reference.strip()
-            id_match = re.search(r"Rule\s*#?(\d+)", ref)
-            if not id_match:
-                # Refuse findings that fail to cite a specific rule ID
+            # 3. Grounding enforcement: Resolve guideline reference to an approved rule
+            matched_rule = cls.resolve_rule_reference(candidate.guideline_reference, approved_rules)
+            if not matched_rule:
+                logger.debug(f"Discarding finding with unresolvable reference: '{candidate.guideline_reference}'")
+                discarded_count += 1
                 continue
 
-            r_id = int(id_match.group(1))
-            if r_id not in rule_id_map:
-                # Strictly discard hallucinated rule ID not found in workspace approved rules
-                continue
+            canonical_ref = f"Rule #{matched_rule.id}: {matched_rule.title}"
 
-            canonical_ref = f"Rule #{r_id}: {rule_id_map[r_id].title}"
+            # 4. Normalize suggested correction
+            correction = candidate.suggested_correction
+            if not correction or not correction.strip():
+                correction = f"Revise '{actual_excerpt}' to align with {matched_rule.title}."
 
             validated_findings.append(
                 FindingCreate(
                     severity=sev,
-                    category=candidate.category.strip() or rule_id_map[r_id].category,
+                    category=candidate.category.strip() or matched_rule.category,
                     excerpt=actual_excerpt,
                     explanation=candidate.explanation.strip(),
                     guideline_reference=canonical_ref,
-                    suggested_correction=candidate.suggested_correction,
+                    suggested_correction=correction.strip(),
                     confidence=candidate.confidence,
                     status="open",
                 )
             )
+
+        logger.info(
+            f"AI validation completed: validated={len(validated_findings)}, "
+            f"discarded={discarded_count} candidate(s)."
+        )
 
         return parsed_resp.summary, validated_findings
 

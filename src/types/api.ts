@@ -125,7 +125,8 @@ export interface ReviewResult {
   channel: ChannelType
   overallScore: number
   issuesCount: number
-  status: 'approved' | 'in_review' | 'flagged' | 'rejected'
+  status: 'approved' | 'in_review' | 'flagged' | 'rejected' | 'rules_unavailable'
+  hasApprovedRules?: boolean
   summary: string
   contentPreview: string
   findings: ComplianceFinding[]

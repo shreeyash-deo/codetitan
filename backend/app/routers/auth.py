@@ -10,6 +10,7 @@ from app.core.dependencies import get_current_user
 from app.schemas.user import UserCreate, UserOut
 from app.schemas.token import Token, LoginRequest
 from app.services.auth_service import auth_service
+from app.services.workspace_service import workspace_service
 from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 def register(user_in: UserCreate, db: Session = Depends(get_db)):
     """
     Create a new user account with hashed password and role assignment.
+    Optionally joins an existing organisation by org_id (creates pending membership).
     """
     existing_user = auth_service.get_by_email(db, email=user_in.email)
     if existing_user:
@@ -32,7 +34,25 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
             detail="A user with this email address already exists.",
         )
 
+    # If org_id is provided, validate it before creating the user
+    target_workspace = None
+    if user_in.org_id:
+        clean_org = user_in.org_id.strip().upper()
+        target_workspace = workspace_service.get_by_org_id(db, clean_org)
+        if not target_workspace:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Organisation ID '{user_in.org_id}' not found. Please verify the code.",
+            )
+
     user = auth_service.create_user(db, user_in=user_in)
+
+    if target_workspace:
+        try:
+            workspace_service.request_join(db, target_workspace.org_id, user.id)
+        except ValueError as err:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
+
     return user
 
 

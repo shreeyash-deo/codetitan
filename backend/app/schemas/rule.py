@@ -9,6 +9,12 @@ class ExtractedRuleCandidate(BaseModel):
     category: str = Field(..., description="Rule category")
     source_reference: Optional[str] = Field(None, description="Page or section citation in document")
     confidence: float = Field(1.0, ge=0.0, le=1.0, description="Extraction confidence score")
+    subCategory: Optional[str] = Field(None, description="Detailed subcategory topic")
+    rationale: Optional[str] = Field(None, description="Rule justification and risk rationale")
+    severity: Optional[str] = Field(None, description="critical, high, medium, or low")
+    enforcement_level: Optional[str] = Field(None, description="Strict or Advisory")
+    approved_example: Optional[str] = Field(None, description="Recommended compliant phrasing")
+    prohibited_example: Optional[str] = Field(None, description="Explicitly non-compliant phrasing")
 
 
 class ExtractedRulesResponse(BaseModel):
