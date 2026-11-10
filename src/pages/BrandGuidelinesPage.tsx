@@ -33,9 +33,10 @@ export const BrandGuidelinesPage: React.FC = () => {
   const { user } = useAuth()
   const { currentWorkspace } = useWorkspace()
 
-  const userRole = (currentWorkspace?.role || 'employee').toLowerCase()
+  const userRole = currentWorkspace?.role ? currentWorkspace.role.toLowerCase() : 'unknown'
   const isAdmin = userRole === 'admin'
   const isReviewer = userRole === 'reviewer'
+  const isEmployee = userRole === 'employee'
 
   const {
     approvedRules,
@@ -152,7 +153,7 @@ export const BrandGuidelinesPage: React.FC = () => {
             </div>
             <div>
               <p className="font-semibold text-slate-900">
-                {isReviewer ? 'Reviewer Access (Read-Only Knowledge Studio)' : 'Employee Access (Read-Only Knowledge Studio)'}
+                {isReviewer ? 'Reviewer Access (Read-Only Knowledge Studio)' : isEmployee ? 'Employee Access (Read-Only Knowledge Studio)' : 'Restricted Access (Membership Unresolved)'}
               </p>
               <p className="text-slate-600 mt-0.5">
                 You can browse approved brand guidelines and reference source documents. Uploading manuals, editing brand laws, and approving candidate rules require Workspace Administrator privileges.

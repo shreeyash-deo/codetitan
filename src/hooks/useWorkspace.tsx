@@ -15,7 +15,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [error, setError] = useState<string | null>(null)
 
   const refreshWorkspaces = useCallback(async () => {
-    if (!isAuthenticated || !user) {
+    if (!isAuthenticated || !user || !user.id) {
       setWorkspaces([])
       setCurrentWorkspace(null)
       if (typeof window !== 'undefined') {
@@ -31,12 +31,15 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const rawList = await apiClient.get<any[]>('/api/v1/workspaces')
       
       const mapped: Workspace[] = rawList.map((ws, idx) => {
-        // Resolve current user's role in this workspace strictly from approved membership
-        // Unresolved identity or membership must NEVER receive elevated Admin privileges
+        // Resolve current user's role in this workspace strictly from approved membership.
+        // An unresolved user or membership must have NO permissions (explicitly 'unknown').
+        // Permissions must NEVER be granted by default or while membership is missing or pending.
         const membership = user.id && ws.members
-          ? ws.members.find((m: any) => String(m.user_id) === String(user.id) && m.status === 'approved')
+          ? ws.members.find((m: any) => String(m.user_id) === String(user.id))
           : null
-        const userRole = membership?.role || 'Employee'
+
+        const isApproved = membership?.status === 'approved'
+        const userRole = (isApproved && membership?.role) ? membership.role : 'unknown'
 
         return {
           id: String(ws.id),

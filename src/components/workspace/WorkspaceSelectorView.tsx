@@ -266,7 +266,7 @@ export const WorkspaceSelectorView: React.FC = () => {
                           {ws.name}
                         </span>
                         <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-900/40 text-blue-300 border border-blue-800/40 font-medium">
-                          {ws.role || 'Admin'}
+                          {ws.role || 'Unresolved'}
                         </span>
                       </div>
                       <div className="flex items-center gap-2 mt-0.5">

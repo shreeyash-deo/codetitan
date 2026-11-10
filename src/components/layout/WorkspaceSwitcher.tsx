@@ -67,7 +67,7 @@ export const WorkspaceSwitcher: React.FC<WorkspaceSwitcherProps> = ({ collapsed 
                       {currentWorkspace.name}
                     </span>
                     <span className="text-[9px] px-1 py-0.2 rounded bg-blue-900/60 text-blue-300 font-medium">
-                      {currentWorkspace.role || 'Admin'}
+                      {currentWorkspace.role || 'Unresolved'}
                     </span>
                   </div>
                   <span className="text-[10px] text-slate-400 truncate flex items-center gap-1 font-mono">
@@ -127,7 +127,7 @@ export const WorkspaceSwitcher: React.FC<WorkspaceSwitcherProps> = ({ collapsed 
                         {ws.name}
                       </span>
                       <span className="text-[9px] px-1 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                        {ws.role || 'Admin'}
+                        {ws.role || 'Unresolved'}
                       </span>
                     </div>
                     <span className="text-[10px] text-slate-400 font-mono">

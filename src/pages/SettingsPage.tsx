@@ -46,7 +46,7 @@ export const SettingsPage: React.FC = () => {
   const { user } = useAuth()
   const { success, info } = useToast()
 
-  const userRole = (currentWorkspace?.role || 'employee').toLowerCase()
+  const userRole = currentWorkspace?.role ? currentWorkspace.role.toLowerCase() : 'unknown'
   const isAdmin = userRole === 'admin'
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')

@@ -447,3 +447,146 @@ class TestStrictRBACMatrix:
 
         # Employee from Org A tries to access Org B review by ID
         assert client.get(f"/api/history/{review_b.id}", headers=headers_a).status_code == 403
+
+    # 17. Unauthenticated user has zero access
+    def test_17_unauthenticated_user_rejected(self, client: TestClient, rbac_fixture):
+        ws_a = rbac_fixture["ws_a"]
+        # No authorization headers provided
+        assert client.get(f"/api/v1/workspaces").status_code == 401
+        assert client.get(f"/api/v1/workspaces/{ws_a.id}").status_code == 401
+        assert client.get(f"/api/v1/workspaces/{ws_a.id}/rules").status_code == 401
+        assert client.get(f"/api/v1/workspaces/{ws_a.id}/guidelines").status_code == 401
+
+    # 18. Authenticated user with unresolved membership has zero permissions
+    def test_18_authenticated_user_unresolved_membership_has_zero_permissions(
+        self, client: TestClient, rbac_fixture, db: Session
+    ):
+        outsider = make_user(db, "unresolved_outsider@example.com", "Unresolved Outsider")
+        outsider_headers = make_auth_header(outsider)
+        ws_a = rbac_fixture["ws_a"]
+
+        # Outsider's workspace list does not include ws_a
+        res = client.get("/api/v1/workspaces", headers=outsider_headers)
+        assert res.status_code == 200
+        assert not any(w["id"] == ws_a.id for w in res.json())
+
+        # Direct access to ws_a returns 403 Forbidden
+        assert client.get(f"/api/v1/workspaces/{ws_a.id}", headers=outsider_headers).status_code == 403
+        assert client.get(f"/api/v1/workspaces/{ws_a.id}/rules", headers=outsider_headers).status_code == 403
+        assert client.post(f"/api/v1/workspaces/{ws_a.id}/rules", json={"title": "R", "description": "D", "category": "Legal"}, headers=outsider_headers).status_code == 403
+        assert client.get(f"/api/v1/workspaces/{ws_a.id}/guidelines", headers=outsider_headers).status_code == 403
+
+    # 19. Pending membership has zero permissions
+    def test_19_pending_membership_has_zero_permissions(
+        self, client: TestClient, rbac_fixture, db: Session
+    ):
+        applicant = make_user(db, "pending_applicant@example.com", "Pending Applicant")
+        applicant_headers = make_auth_header(applicant)
+        ws_a = rbac_fixture["ws_a"]
+
+        # Create explicit pending join request
+        member = WorkspaceMember(
+            workspace_id=ws_a.id,
+            user_id=applicant.id,
+            role="Employee",
+            status="pending",
+        )
+        db.add(member)
+        db.commit()
+
+        # Pending user does NOT see ws_a in approved workspaces
+        res = client.get("/api/v1/workspaces", headers=applicant_headers)
+        assert res.status_code == 200
+        assert not any(w["id"] == ws_a.id for w in res.json())
+
+        # Accessing ws_a directly is strictly blocked (403)
+        assert client.get(f"/api/v1/workspaces/{ws_a.id}", headers=applicant_headers).status_code == 403
+        assert client.get(f"/api/v1/workspaces/{ws_a.id}/rules", headers=applicant_headers).status_code == 403
+        assert client.get(f"/api/v1/workspaces/{ws_a.id}/guidelines", headers=applicant_headers).status_code == 403
+
+    # 20. Approved Employee has employee permissions only (no admin/reviewer elevation)
+    def test_20_approved_employee_has_employee_permissions_only(
+        self, client: TestClient, rbac_fixture
+    ):
+        ws_a = rbac_fixture["ws_a"]
+        emp_headers = rbac_fixture["headers_employee_a"]
+
+        # Employee can read approved rules
+        rules_res = client.get(f"/api/v1/workspaces/{ws_a.id}/rules", headers=emp_headers)
+        assert rules_res.status_code == 200
+
+        # Employee CANNOT view pending candidate rules (Admin only)
+        assert client.get(f"/api/v1/workspaces/{ws_a.id}/rules/pending", headers=emp_headers).status_code == 403
+
+        # Employee CANNOT create official rules
+        assert client.post(
+            f"/api/v1/workspaces/{ws_a.id}/rules",
+            json={"title": "Unauthorized Rule", "description": "Desc", "category": "Legal"},
+            headers=emp_headers,
+        ).status_code == 403
+
+        # Employee CANNOT upload guidelines
+        assert client.post(
+            f"/api/v1/workspaces/{ws_a.id}/guidelines/upload",
+            files={"file": ("test.txt", io.BytesIO(b"Data"), "text/plain")},
+            headers=emp_headers,
+        ).status_code == 403
+
+    # 21. Approved Admin has full governance permissions
+    def test_21_approved_admin_has_full_governance_permissions(
+        self, client: TestClient, rbac_fixture
+    ):
+        ws_a = rbac_fixture["ws_a"]
+        admin_headers = rbac_fixture["headers_admin_a"]
+
+        # Admin can create rules
+        rule_res = client.post(
+            f"/api/v1/workspaces/{ws_a.id}/rules",
+            json={"title": "Official Rule By Admin", "description": "Strict compliance rule.", "category": "Legal"},
+            headers=admin_headers,
+        )
+        assert rule_res.status_code == 201
+        created_rule_id = rule_res.json()["id"]
+
+        # Admin can edit rules
+        patch_res = client.patch(
+            f"/api/v1/rules/{created_rule_id}",
+            json={"title": "Updated Official Rule By Admin"},
+            headers=admin_headers,
+        )
+        assert patch_res.status_code == 200
+        assert patch_res.json()["title"] == "Updated Official Rule By Admin"
+
+        # Admin can delete rules
+        del_res = client.delete(f"/api/v1/rules/{created_rule_id}", headers=admin_headers)
+        assert del_res.status_code == 204
+
+    # 22. Switching from Admin to Employee workspace enforces isolated roles
+    def test_22_switching_workspaces_between_admin_and_employee_enforces_isolated_roles(
+        self, client: TestClient, rbac_fixture, db: Session
+    ):
+        ws_a = rbac_fixture["ws_a"]  # User is Admin here
+        ws_b = rbac_fixture["ws_b"]  # User will be Employee here
+        dual_user = make_user(db, "dual_role_user@example.com", "Dual Role User")
+        dual_headers = make_auth_header(dual_user)
+
+        # Assign Admin in ws_a, Employee in ws_b
+        workspace_service.add_member(db, ws_a.id, dual_user.id, role="Admin")
+        workspace_service.add_member(db, ws_b.id, dual_user.id, role="Employee")
+
+        # In ws_a, user can create brand rules
+        res_a = client.post(
+            f"/api/v1/workspaces/{ws_a.id}/rules",
+            json={"title": "Rule in Org A", "description": "Desc", "category": "Voice"},
+            headers=dual_headers,
+        )
+        assert res_a.status_code == 201
+
+        # In ws_b, user is strictly Employee -> creating rules is blocked (403)
+        res_b = client.post(
+            f"/api/v1/workspaces/{ws_b.id}/rules",
+            json={"title": "Rule in Org B", "description": "Desc", "category": "Voice"},
+            headers=dual_headers,
+        )
+        assert res_b.status_code == 403
+        assert "Required workspace role: Admin" in res_b.json()["detail"]

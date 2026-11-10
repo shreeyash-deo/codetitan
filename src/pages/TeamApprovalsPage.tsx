@@ -530,7 +530,7 @@ export const TeamApprovalsPage: React.FC = () => {
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     {currentWorkspace?.name}
                     <Badge variant="blue" className="text-[10px]">
-                      {currentWorkspace?.role || 'Admin'}
+                      {currentWorkspace?.role || 'Unresolved'}
                     </Badge>
                   </h3>
                   <div className="flex items-center gap-2 mt-0.5">
