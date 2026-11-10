@@ -16,6 +16,8 @@ import {
   ExternalLink,
   Layers,
   ArrowRight,
+  AlertCircle,
+  AlertTriangle,
 } from 'lucide-react'
 
 interface SourceDocumentsTabProps {
@@ -278,10 +280,43 @@ export const SourceDocumentsTab: React.FC<SourceDocumentsTabProps> = ({
 
                     {/* Extracted Candidates */}
                     <td className="px-4 py-3.5 whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1 font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded text-[11px] border border-blue-200">
-                        <Sparkles className="w-3 h-3 text-blue-600" />
-                        {doc.extractedCandidatesCount} candidates
-                      </span>
+                      {doc.status === 'text_failed' ? (
+                        <span
+                          className="inline-flex items-center gap-1 font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded text-[11px] border border-amber-200"
+                          title="Text extraction failed from file"
+                        >
+                          <AlertTriangle className="w-3 h-3 text-amber-600" />
+                          Text Failed
+                        </span>
+                      ) : doc.status === 'ai_failed' || doc.status === 'failed' ? (
+                        <span
+                          className="inline-flex items-center gap-1 font-medium text-rose-700 bg-rose-50 px-2 py-0.5 rounded text-[11px] border border-rose-200"
+                          title="Text preserved, AI rule extraction failed"
+                        >
+                          <AlertCircle className="w-3 h-3 text-rose-600" />
+                          AI Failed
+                        </span>
+                      ) : doc.status === 'empty' ? (
+                        <span className="inline-flex items-center gap-1 font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded text-[11px] border border-slate-200">
+                          Empty Doc
+                        </span>
+                      ) : doc.status === 'duplicate' ? (
+                        <span
+                          className="inline-flex items-center gap-1 font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded text-[11px] border border-amber-200"
+                          title="All extracted rules already exist in workspace"
+                        >
+                          All Duplicates
+                        </span>
+                      ) : doc.status === 'no_candidates' ? (
+                        <span className="inline-flex items-center gap-1 font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded text-[11px] border border-slate-200">
+                          0 Found
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded text-[11px] border border-blue-200">
+                          <Sparkles className="w-3 h-3 text-blue-600" />
+                          {doc.extractedCandidatesCount} candidates
+                        </span>
+                      )}
                     </td>
 
                     {/* Approved Rules */}

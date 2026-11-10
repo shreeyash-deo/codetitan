@@ -153,7 +153,7 @@ async def upload_guideline(
         if not extracted_text:
             status_str = "empty"
     except Exception as exc:
-        status_str = "failed"
+        status_str = "text_failed"
         extracted_text = f"[Text extraction failed: {str(exc)}]"
 
     # 5. Persist document metadata in database

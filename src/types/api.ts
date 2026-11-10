@@ -67,10 +67,23 @@ export interface SourceDocument {
   pages: number
   uploadedAt: string
   uploadedBy: string
-  status: 'extracted' | 'processing' | 'indexed'
+  status:
+    | 'extracted'
+    | 'processing'
+    | 'indexed'
+    | 'empty'
+    | 'no_candidates'
+    | 'duplicate'
+    | 'text_failed'
+    | 'ai_failed'
+    | 'failed'
   extractedCandidatesCount: number
   approvedRulesCount: number
   fileUrl?: string
+  error?: string
+  errorMessage?: string
+  message?: string
+  duplicateCount?: number
 }
 
 // ============================================================================

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from app.models.rule import BrandRule
 from app.models.approval import Approval
@@ -25,15 +25,17 @@ class RuleService:
         return query.order_by(BrandRule.created_at.desc()).all()
 
     @staticmethod
-    def save_extracted_rules(
+    def save_extracted_rules_with_stats(
         db: Session,
         workspace_id: int,
         document_id: int,
         candidates: List[ExtractedRuleCandidate],
-    ) -> List[BrandRule]:
+    ) -> Tuple[List[BrandRule], int]:
         """
         Persist AI-extracted candidate rules into the database as 'pending'.
         Prevents duplicate rule proliferation by checking existing titles in the workspace.
+        Preserves existing approved rules immutably.
+        Returns (created_rules, duplicate_count).
         """
         existing_rules = (
             db.query(BrandRule)
@@ -43,10 +45,12 @@ class RuleService:
         existing_titles = {r.title.strip().lower() for r in existing_rules}
 
         created_rules: List[BrandRule] = []
+        duplicate_count = 0
         for candidate in candidates:
             title_clean = candidate.title.strip()
             # Avoid duplicate rules if an identical rule title already exists in this workspace
             if title_clean.lower() in existing_titles:
+                duplicate_count += 1
                 continue
 
             rule = BrandRule(
@@ -67,6 +71,18 @@ class RuleService:
         for r in created_rules:
             db.refresh(r)
 
+        return created_rules, duplicate_count
+
+    @staticmethod
+    def save_extracted_rules(
+        db: Session,
+        workspace_id: int,
+        document_id: int,
+        candidates: List[ExtractedRuleCandidate],
+    ) -> List[BrandRule]:
+        created_rules, _ = RuleService.save_extracted_rules_with_stats(
+            db, workspace_id, document_id, candidates
+        )
         return created_rules
 
     @staticmethod

@@ -459,7 +459,31 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (rulesData) {
         setApprovedRules(rulesData as unknown as ApprovedRule[])
       }
-      success(`Document "${file.name}" uploaded and parsed into brand knowledge queue!`, 'File Processed')
+      if (uploadedDoc.status === 'text_failed') {
+        toastError(
+          uploadedDoc.errorMessage || uploadedDoc.error || 'Failed to extract text from document.',
+          'Text Extraction Failed'
+        )
+      } else if (uploadedDoc.status === 'ai_failed' || uploadedDoc.status === 'failed') {
+        warning(
+          uploadedDoc.errorMessage || uploadedDoc.error || 'Document text preserved, but AI rule extraction failed.',
+          'AI Extraction Incomplete'
+        )
+      } else if (uploadedDoc.status === 'empty') {
+        warning('Document contains no readable text content.', 'Empty Document')
+      } else if (uploadedDoc.status === 'duplicate') {
+        info(
+          uploadedDoc.message || `All candidate rules (${uploadedDoc.duplicateCount || 0}) already exist in brand guidelines.`,
+          'Duplicate Rules'
+        )
+      } else if (uploadedDoc.status === 'no_candidates') {
+        info('Document analyzed successfully; zero governance rules were identified.', 'No Candidates Found')
+      } else {
+        success(
+          `Document "${file.name}" parsed! ${uploadedDoc.extractedCandidatesCount} candidate rules queued for review.`,
+          'Extraction Complete'
+        )
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Upload failed'
       setError(msg)
@@ -490,7 +514,16 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setApprovedRules(rulesData as unknown as ApprovedRule[])
       }
       const count = res?.extractedCandidatesCount ?? 0
-      success(`Rule extraction complete: ${count} candidate rules queued for review!`, 'Extraction Successful')
+      if (res?.status === 'duplicate') {
+        info(
+          res.message || `All extracted candidate rules (${res.duplicateCount || 0}) already exist in brand guidelines.`,
+          'Duplicate Candidates'
+        )
+      } else if (res?.status === 'no_candidates' || count === 0) {
+        info('Document re-analyzed: zero new candidate rules were identified.', 'No Candidates Found')
+      } else {
+        success(`Rule extraction complete: ${count} candidate rules queued for review!`, 'Extraction Successful')
+      }
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.detail || err?.message || 'Extraction failed'
       setError(msg)

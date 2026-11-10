@@ -451,52 +451,150 @@ async def upload_brand_document(
     with open(file_path, "wb") as f:
         f.write(file_bytes)
 
-    extracted_text = extract_document_text(file_path, ext)
+    # 1. Attempt text extraction
+    try:
+        extracted_text = extract_document_text(file_path, ext)
+    except Exception as exc:
+        import logging
+        logging.getLogger("brandshield.compat").error(f"Text extraction failed for {file.filename}: {exc}")
+        doc = GuidelineDocument(
+            workspace_id=ws_id,
+            filename=file.filename,
+            file_path=file_path,
+            extracted_text=None,
+            status="text_failed",
+        )
+        db.add(doc)
+        db.commit()
+        db.refresh(doc)
+        return {
+            "id": str(doc.id),
+            "name": doc.filename,
+            "format": "DOCX" if doc.filename.lower().endswith(".docx") else "PDF",
+            "size": f"{round(len(file_bytes) / (1024*1024), 1)} MB" if len(file_bytes) > 0 else "0.1 MB",
+            "pages": 0,
+            "uploadedAt": "Today",
+            "uploadedBy": current_user.name,
+            "status": "text_failed",
+            "extractedCandidatesCount": 0,
+            "approvedRulesCount": 0,
+            "error": f"Text extraction failed: {str(exc)}",
+            "errorMessage": f"Text extraction failed: {str(exc)}",
+        }
 
+    # 2. Check for empty text
+    if not extracted_text or not extracted_text.strip():
+        doc = GuidelineDocument(
+            workspace_id=ws_id,
+            filename=file.filename,
+            file_path=file_path,
+            extracted_text="",
+            status="empty",
+        )
+        db.add(doc)
+        db.commit()
+        db.refresh(doc)
+        return {
+            "id": str(doc.id),
+            "name": doc.filename,
+            "format": "DOCX" if doc.filename.lower().endswith(".docx") else "PDF",
+            "size": f"{round(len(file_bytes) / (1024*1024), 1)} MB" if len(file_bytes) > 0 else "0.1 MB",
+            "pages": 0,
+            "uploadedAt": "Today",
+            "uploadedBy": current_user.name,
+            "status": "empty",
+            "extractedCandidatesCount": 0,
+            "approvedRulesCount": 0,
+            "error": "Document contains no readable text content.",
+            "errorMessage": "Document contains no readable text content.",
+        }
+
+    # 3. Persist document with extracted text preserved before invoking AI
     doc = GuidelineDocument(
         workspace_id=ws_id,
         filename=file.filename,
         file_path=file_path,
         extracted_text=extracted_text,
-        status="extracted",
+        status="pending",
     )
     db.add(doc)
-    db.commit()
-    db.refresh(doc)
-
-    # Automatically extract brand rules from the document text
-    extracted_candidates = []
-    extraction_status = "extracted"
-    if doc.extracted_text and doc.extracted_text.strip():
-        try:
-            from app.services.ai.ai_service import ai_service
-            candidates = ai_service.extract_rules_from_text(doc.extracted_text)
-            extracted_candidates = rule_service.save_extracted_rules(
-                db=db,
-                workspace_id=ws_id,
-                document_id=doc.id,
-                candidates=candidates,
-            )
-            doc.status = "extracted"
-            db.commit()
-        except Exception as exc:
-            import logging
-            logging.getLogger("brandshield.compat").error(f"Rule extraction failed for {doc.filename}: {exc}")
-            extraction_status = "failed"
-            doc.status = "failed"
-            db.commit()
-    else:
-        extraction_status = "empty"
-        doc.status = "empty"
-        db.commit()
-
-    # Record governance activity
     db.add(ReviewActivity(
         workspace_id=ws_id,
         user_id=current_user.id,
         action="Guideline Uploaded",
-        details=f"Uploaded brand guideline '{doc.filename}' with {len(extracted_candidates)} candidate rules extracted.",
+        details=f"Uploaded brand guideline '{doc.filename}'.",
     ))
+    db.commit()
+    db.refresh(doc)
+
+    # 4. Invoke AI rule extraction
+    from app.services.ai.ai_service import ai_service
+    try:
+        candidates = ai_service.extract_rules_from_text(doc.extracted_text)
+    except Exception as exc:
+        import logging
+        logging.getLogger("brandshield.compat").error(f"Rule extraction failed for {doc.filename}: {exc}")
+        doc.status = "ai_failed"
+        db.commit()
+        return {
+            "id": str(doc.id),
+            "name": doc.filename,
+            "format": "DOCX" if doc.filename.lower().endswith(".docx") else "PDF",
+            "size": f"{round(len(file_bytes) / (1024*1024), 1)} MB" if len(file_bytes) > 0 else "0.1 MB",
+            "pages": max(1, doc.extracted_text.count("--- Page") or 1),
+            "uploadedAt": "Today",
+            "uploadedBy": current_user.name,
+            "status": "ai_failed",
+            "extractedCandidatesCount": 0,
+            "approvedRulesCount": 0,
+            "error": f"AI rule extraction failed: {str(exc)}",
+            "errorMessage": f"AI rule extraction failed: {str(exc)}",
+        }
+
+    # 5. Check outcome of candidate extraction
+    if len(candidates) == 0:
+        doc.status = "no_candidates"
+        db.commit()
+        return {
+            "id": str(doc.id),
+            "name": doc.filename,
+            "format": "DOCX" if doc.filename.lower().endswith(".docx") else "PDF",
+            "size": f"{round(len(file_bytes) / (1024*1024), 1)} MB" if len(file_bytes) > 0 else "0.1 MB",
+            "pages": max(1, doc.extracted_text.count("--- Page") or 1),
+            "uploadedAt": "Today",
+            "uploadedBy": current_user.name,
+            "status": "no_candidates",
+            "extractedCandidatesCount": 0,
+            "approvedRulesCount": 0,
+            "message": "Document analyzed successfully; zero governance rules were identified.",
+        }
+
+    created_rules, duplicate_count = rule_service.save_extracted_rules_with_stats(
+        db=db,
+        workspace_id=ws_id,
+        document_id=doc.id,
+        candidates=candidates,
+    )
+
+    if len(created_rules) == 0 and duplicate_count > 0:
+        doc.status = "duplicate"
+        db.commit()
+        return {
+            "id": str(doc.id),
+            "name": doc.filename,
+            "format": "DOCX" if doc.filename.lower().endswith(".docx") else "PDF",
+            "size": f"{round(len(file_bytes) / (1024*1024), 1)} MB" if len(file_bytes) > 0 else "0.1 MB",
+            "pages": max(1, doc.extracted_text.count("--- Page") or 1),
+            "uploadedAt": "Today",
+            "uploadedBy": current_user.name,
+            "status": "duplicate",
+            "extractedCandidatesCount": 0,
+            "duplicateCount": duplicate_count,
+            "approvedRulesCount": 0,
+            "message": f"Found {duplicate_count} candidate rules, but all were already present in workspace brand guidelines.",
+        }
+
+    doc.status = "extracted"
     db.commit()
 
     return {
@@ -504,11 +602,12 @@ async def upload_brand_document(
         "name": doc.filename,
         "format": "DOCX" if doc.filename.lower().endswith(".docx") else "PDF",
         "size": f"{round(len(file_bytes) / (1024*1024), 1)} MB" if len(file_bytes) > 0 else "0.1 MB",
-        "pages": 12,
+        "pages": max(1, doc.extracted_text.count("--- Page") or 1),
         "uploadedAt": "Today",
         "uploadedBy": current_user.name,
-        "status": extraction_status,
-        "extractedCandidatesCount": len(extracted_candidates),
+        "status": "extracted",
+        "extractedCandidatesCount": len(created_rules),
+        "duplicateCount": duplicate_count,
         "approvedRulesCount": 0,
     }
 
@@ -531,24 +630,62 @@ def re_extract_brand_document(
 
     verify_workspace_admin_in_compat(db, doc.workspace_id, current_user.id)
 
+    # If text is missing or text extraction previously failed, try re-extracting text if file exists on disk
     if not doc.extracted_text or not doc.extracted_text.strip():
-        raise HTTPException(status_code=400, detail="Document text is empty. Cannot extract rules.")
+        if doc.file_path and os.path.exists(doc.file_path):
+            ext = os.path.splitext(doc.filename)[1].lower()
+            try:
+                doc.extracted_text = extract_document_text(doc.file_path, ext)
+                db.commit()
+            except Exception as txt_err:
+                doc.status = "text_failed"
+                db.commit()
+                raise HTTPException(status_code=400, detail=f"Text extraction failed: {str(txt_err)}")
+        if not doc.extracted_text or not doc.extracted_text.strip():
+            doc.status = "empty"
+            db.commit()
+            raise HTTPException(status_code=400, detail="Document text is empty. Cannot extract rules.")
 
     from app.services.ai.ai_service import ai_service
     try:
         candidates = ai_service.extract_rules_from_text(doc.extracted_text)
-        created_rules = rule_service.save_extracted_rules(
-            db=db,
-            workspace_id=doc.workspace_id,
-            document_id=doc.id,
-            candidates=candidates,
-        )
-        doc.status = "extracted"
-        db.commit()
     except Exception as exc:
-        doc.status = "failed"
+        doc.status = "ai_failed"
         db.commit()
         raise HTTPException(status_code=500, detail=f"Rule extraction failed: {str(exc)}")
+
+    if len(candidates) == 0:
+        doc.status = "no_candidates"
+        db.commit()
+        return {
+            "document_id": str(doc.id),
+            "filename": doc.filename,
+            "status": "no_candidates",
+            "extractedCandidatesCount": 0,
+            "message": "Extraction succeeded; zero governance rules were identified.",
+        }
+
+    created_rules, duplicate_count = rule_service.save_extracted_rules_with_stats(
+        db=db,
+        workspace_id=doc.workspace_id,
+        document_id=doc.id,
+        candidates=candidates,
+    )
+
+    if len(created_rules) == 0 and duplicate_count > 0:
+        doc.status = "duplicate"
+        db.commit()
+        return {
+            "document_id": str(doc.id),
+            "filename": doc.filename,
+            "status": "duplicate",
+            "extractedCandidatesCount": 0,
+            "duplicateCount": duplicate_count,
+            "message": f"Found {duplicate_count} candidate rules, but all were already present in workspace brand guidelines.",
+        }
+
+    doc.status = "extracted"
+    db.commit()
 
     # Record governance activity
     db.add(ReviewActivity(
@@ -563,7 +700,8 @@ def re_extract_brand_document(
         "document_id": str(doc.id),
         "filename": doc.filename,
         "extractedCandidatesCount": len(created_rules),
-        "status": doc.status,
+        "status": "extracted",
+        "duplicateCount": duplicate_count,
     }
 
 
