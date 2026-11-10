@@ -59,7 +59,7 @@ export const AppShell: React.FC = () => {
 
   // 5. Full Authenticated Application Shell
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background">
+    <div className="flex h-screen w-full overflow-hidden bg-background">
       {/* Desktop Sidebar */}
       <div className="hidden lg:flex shrink-0">
         <Sidebar
@@ -101,7 +101,7 @@ export const AppShell: React.FC = () => {
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <Header onMobileMenuToggle={toggleMobile} />
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-7 py-6 min-w-0">
           <Outlet />
         </main>
       </div>

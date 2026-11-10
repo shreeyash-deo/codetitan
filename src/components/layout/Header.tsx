@@ -49,7 +49,7 @@ export const Header: React.FC<HeaderProps> = ({ onMobileMenuToggle }) => {
   }
 
   return (
-    <header className="h-14 border-b border-border bg-white/95 backdrop-blur supports-backdrop-blur:bg-white/80 sticky top-0 z-20 px-4 sm:px-6 flex items-center justify-between gap-4 select-none">
+    <header className="h-14 border-b border-border bg-white/95 backdrop-blur supports-backdrop-blur:bg-white/80 sticky top-0 z-20 px-4 sm:px-6 lg:px-7 flex items-center justify-between gap-4 select-none">
       {/* Left: Mobile Toggle + Breadcrumbs */}
       <div className="flex items-center gap-3 min-w-0">
         <button
