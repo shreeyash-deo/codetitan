@@ -6,7 +6,8 @@ from app.schemas.user import UserOut
 
 class ReviewActivityOut(BaseModel):
     id: int
-    review_id: int
+    review_id: Optional[int] = None
+    workspace_id: Optional[int] = None
     user_id: Optional[int] = None
     action: str
     details: Optional[str] = None

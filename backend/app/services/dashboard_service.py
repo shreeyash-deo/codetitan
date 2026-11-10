@@ -7,7 +7,8 @@ from app.models.finding import Finding
 from app.models.rule import BrandRule
 from app.models.approval import Approval
 from app.models.activity import ReviewActivity
-from app.schemas.dashboard import DashboardStatsOut
+from app.models.guideline import GuidelineDocument
+from app.schemas.dashboard import DashboardStatsOut, ViolationCategoryStat
 
 
 class DashboardService:
@@ -19,6 +20,7 @@ class DashboardService:
         # Reviews stats
         reviews_query = db.query(ContentReview).filter(ContentReview.workspace_id == workspace_id)
         total_reviews = reviews_query.count()
+        has_reviews = total_reviews > 0
 
         avg_score_res = (
             db.query(func.avg(ContentReview.compliance_score))
@@ -34,6 +36,13 @@ class DashboardService:
             reviews_query.filter(
                 ContentReview.status.in_(["needs_changes", "needs_revision", "critical_issues"])
             ).count()
+        )
+
+        # Uploaded guideline documents
+        uploaded_documents = (
+            db.query(GuidelineDocument)
+            .filter(GuidelineDocument.workspace_id == workspace_id)
+            .count()
         )
 
         # Pending approvals (both reviews and rules)
@@ -62,6 +71,44 @@ class DashboardService:
             )
             .count()
         )
+
+        # Violation breakdown by category & severity
+        findings_grouped = (
+            db.query(Finding.category, Finding.severity, func.count(Finding.id))
+            .join(ContentReview, Finding.review_id == ContentReview.id)
+            .filter(ContentReview.workspace_id == workspace_id)
+            .group_by(Finding.category, Finding.severity)
+            .all()
+        )
+
+        total_findings_count = sum(row[2] for row in findings_grouped)
+        category_map = {}
+        for cat, sev, cnt in findings_grouped:
+            c_name = cat or "General Compliance"
+            if c_name not in category_map:
+                category_map[c_name] = {"count": 0, "severities": {}}
+            category_map[c_name]["count"] += cnt
+            category_map[c_name]["severities"][sev] = category_map[c_name]["severities"].get(sev, 0) + cnt
+
+        violations_by_category = []
+        for c_name, data in sorted(category_map.items(), key=lambda x: x[1]["count"], reverse=True):
+            cnt = data["count"]
+            pct = round((cnt / total_findings_count) * 100, 1) if total_findings_count > 0 else 0.0
+            sevs = data["severities"]
+            dominant_sev = (
+                "critical"
+                if sevs.get("critical", 0) > 0
+                else ("moderate" if sevs.get("moderate", 0) > 0 else "minor")
+            )
+            violations_by_category.append(
+                ViolationCategoryStat(
+                    category=c_name,
+                    count=cnt,
+                    percentage=pct,
+                    severity=dominant_sev,
+                    description=f"Identified across audited copy in {c_name.lower()}.",
+                )
+            )
 
         # Brand rules counts
         rules_query = db.query(BrandRule).filter(BrandRule.workspace_id == workspace_id)
@@ -93,12 +140,15 @@ class DashboardService:
         return DashboardStatsOut(
             total_reviews=total_reviews,
             average_compliance_score=avg_score,
+            has_reviews=has_reviews,
             pending_approvals=pending_approvals,
             approved_reviews=approved_reviews,
             reviews_needing_changes=reviews_needing_changes,
             critical_findings=critical_findings,
             total_approved_brand_rules=total_approved_brand_rules,
             pending_brand_rules=pending_brand_rules,
+            uploaded_documents=uploaded_documents,
+            violations_by_category=violations_by_category,
             recent_reviews=recent_reviews,
             recent_activity=recent_activity,
         )

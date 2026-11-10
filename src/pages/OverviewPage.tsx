@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useWorkspace } from '@/hooks/useWorkspace'
+import { useAuth } from '@/context/AuthContext'
 import { useGovernance } from '@/context/GovernanceContext'
 import { useToast } from '@/context/ToastContext'
 import { StatCard } from '@/components/common/StatCard'
@@ -13,9 +14,7 @@ import { RecentReviewsTable } from '@/components/dashboard/RecentReviewsTable'
 import { RecentActivityFeed } from '@/components/dashboard/RecentActivityFeed'
 import { BrandGuidelinesStatusCard } from '@/components/dashboard/BrandGuidelinesStatusCard'
 import { ReviewDetailsDrawer } from '@/components/dashboard/ReviewDetailsDrawer'
-import { ContentSubmissionModal } from '@/components/dashboard/ContentSubmissionModal'
 import type { ReviewItem } from '@/types/review'
-import type { HistoricalReviewRecord } from '@/types/approval'
 import {
   Sparkles,
   BookOpen,
@@ -24,24 +23,26 @@ import {
   Users2,
   AlertTriangle,
   Shield,
-  Download,
+  ArrowRight,
+  UploadCloud,
+  CheckCircle2,
 } from 'lucide-react'
 
 export const OverviewPage: React.FC = () => {
   const navigate = useNavigate()
   const { currentWorkspace } = useWorkspace()
-  const { reviews, metrics, approveContent, addReview } = useGovernance()
-  const { success, info } = useToast()
+  const { user } = useAuth()
+  const { reviews, metrics, approveContent, isLoading } = useGovernance()
+  const { info } = useToast()
 
   const [selectedReview, setSelectedReview] = useState<ReviewItem | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
-  const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false)
 
   // Convert HistoricalReviewRecord into ReviewItem for the dashboard table
   const mappedReviews: ReviewItem[] = reviews.map((r) => ({
     id: r.id,
     title: r.title,
-    channel: r.channel,
+    channel: r.channel || 'Social',
     contentType: r.contentType,
     author: {
       name: r.submittedBy.name,
@@ -50,7 +51,12 @@ export const OverviewPage: React.FC = () => {
       email: r.submittedBy.email,
     },
     score: r.score,
-    status: r.approvalStatus === 'needs_revision' || r.approvalStatus === 'critical_issues' ? 'flagged' : (r.approvalStatus === 'pending' ? 'in_review' : 'approved'),
+    status:
+      r.approvalStatus === 'needs_revision' || r.approvalStatus === 'critical_issues'
+        ? 'flagged'
+        : r.approvalStatus === 'pending'
+        ? 'in_review'
+        : 'approved',
     issuesDetected: r.violationsCount,
     submittedAt: r.reviewDate,
     date: r.reviewDate,
@@ -69,97 +75,15 @@ export const OverviewPage: React.FC = () => {
     if (newStatus === 'approved') {
       approveContent(reviewId)
     } else {
-      info(`Asset marked as ${newStatus}.`, 'Status Updated')
+      info(`Asset status updated to ${newStatus}.`, 'Status Updated')
     }
   }
 
-  const handleAddNewReview = (newRev: ReviewItem) => {
-    const historicalRecord: HistoricalReviewRecord = {
-      id: newRev.id,
-      title: newRev.title,
-      contentType: newRev.contentType,
-      channel: newRev.channel,
-      submittedBy: {
-        name: newRev.author.name,
-        role: newRev.author.role || 'Brand Lead',
-        email: newRev.author.email || 'sarah.chen@novapay.io',
-        avatar: newRev.author.avatar,
-      },
-      assignedReviewer: {
-        name: 'Sarah Chen',
-        role: 'Brand Lead',
-        email: 'sarah.chen@novapay.io',
-        avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
-      },
-      score: newRev.score,
-      violationsCount: newRev.issuesDetected,
-      reviewDate: 'Today',
-      approvalStatus: newRev.status === 'approved' ? 'approved' : 'pending',
-      originalContent: newRev.contentPreview || '',
-      correctedContent: newRev.contentPreview || '',
-      findings: newRev.issues || [],
-      acceptedSuggestionsCount: 0,
-      rejectedSuggestionsCount: 0,
-      comments: [],
-      timeline: [
-        {
-          id: `t-${Date.now()}-1`,
-          stage: 'Content submitted',
-          actorName: newRev.author.name,
-          actorRole: 'Author',
-          timestamp: 'Just now',
-          status: 'completed',
-        },
-        {
-          id: `t-${Date.now()}-2`,
-          stage: 'AI review completed',
-          actorName: 'BrandShield AI',
-          actorRole: 'Automated Sentinel',
-          timestamp: 'Just now',
-          note: `Audit score: ${newRev.score}/100.`,
-          status: 'completed',
-        },
-        {
-          id: `t-${Date.now()}-3`,
-          stage: 'Suggestions applied',
-          actorName: newRev.author.name,
-          actorRole: 'Author',
-          timestamp: 'Just now',
-          status: 'current',
-        },
-        {
-          id: `t-${Date.now()}-4`,
-          stage: 'Approval requested',
-          actorName: newRev.author.name,
-          actorRole: 'Author',
-          timestamp: 'Pending',
-          status: 'pending',
-        },
-        {
-          id: `t-${Date.now()}-5`,
-          stage: 'Reviewer decision',
-          actorName: 'Sarah Chen',
-          actorRole: 'Brand Lead',
-          timestamp: 'Pending',
-          status: 'pending',
-        },
-        {
-          id: `t-${Date.now()}-6`,
-          stage: 'Final approval',
-          actorName: 'Sarah Chen',
-          actorRole: 'Brand Lead',
-          timestamp: 'Pending',
-          status: 'pending',
-        },
-      ],
-    }
-
-    addReview(historicalRecord)
-  }
-
-  const handleExportAudit = () => {
-    success(`Official quarterly governance audit report for ${currentWorkspace?.name || 'Organisation'} downloaded.`, 'Audit Exported')
-  }
+  const isBrandNewOrg =
+    !isLoading &&
+    metrics.contentReviewedCount === 0 &&
+    metrics.approvedRulesCount === 0 &&
+    metrics.sourceDocsCount === 0
 
   return (
     <motion.div
@@ -173,19 +97,27 @@ export const OverviewPage: React.FC = () => {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Good afternoon
+              Workspace Overview
             </span>
             <span className="text-slate-300">•</span>
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-semibold">
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-semibold border border-blue-100">
               <Shield className="w-3 h-3 text-blue-600" />
               <span>{currentWorkspace?.name || 'Organisation'}</span>
+              {currentWorkspace?.orgId && (
+                <span className="text-[10px] text-blue-500 font-mono">({currentWorkspace.orgId})</span>
+              )}
             </div>
+            {currentWorkspace?.role && (
+              <Badge variant="outline" className="text-[10px] uppercase font-semibold">
+                {currentWorkspace.role}
+              </Badge>
+            )}
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
-            Good afternoon, {currentWorkspace?.name || 'Organisation'}
+            Welcome, {user?.name || currentWorkspace?.name || 'Operator'}
           </h1>
           <p className="text-xs sm:text-sm text-slate-500">
-            Here's an overview of your brand health.
+            Real-time compliance posture and brand governance telemetry for {currentWorkspace?.name || 'your organisation'}.
           </p>
         </div>
 
@@ -204,7 +136,7 @@ export const OverviewPage: React.FC = () => {
             variant="primaryBlue"
             size="default"
             className="gap-2 text-xs font-medium shadow-xs"
-            onClick={() => setIsSubmitModalOpen(true)}
+            onClick={() => navigate('/content-review')}
           >
             <Sparkles className="w-3.5 h-3.5" />
             <span>Review New Content</span>
@@ -212,14 +144,63 @@ export const OverviewPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 4 Metric Cards */}
+      {/* Onboarding Banner for newly created organisation */}
+      {isBrandNewOrg && (
+        <div className="p-5 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50/80 via-indigo-50/40 to-slate-50 shadow-xs">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-blue-600 text-white">
+                  Getting Started
+                </span>
+                <span className="text-xs font-semibold text-slate-900">
+                  Welcome to {currentWorkspace?.name || 'BrandShield'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
+                Establish your Brand Memory by uploading your corporate brand guidelines, editorial stylebooks, or terminology guides. Our AI engine extracts candidate rules for Admin approval, creating authoritative guardrails for all marketing copy.
+              </p>
+              <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 pt-1">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">1</span>
+                  Upload Guidelines (PDF/DOCX)
+                </span>
+                <span className="text-slate-300">→</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">2</span>
+                  Approve Brand Rules
+                </span>
+                <span className="text-slate-300">→</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">3</span>
+                  Scan & Remediate Copy
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 shrink-0">
+              <Button
+                variant="primaryBlue"
+                size="sm"
+                className="text-xs gap-1.5 shadow-xs"
+                onClick={() => navigate('/brand-guidelines')}
+              >
+                <UploadCloud className="w-3.5 h-3.5" />
+                <span>Upload Guidelines</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4 Live Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Brand Compliance Score"
-          value={`${metrics.overallScore}/100`}
-          change="+4.2 pts"
-          isPositive={true}
-          trendDescription="vs. 30d baseline"
+          value={metrics.hasReviews ? `${metrics.overallScore}/100` : '--'}
+          change={metrics.hasReviews ? (metrics.overallScore >= 80 ? 'Healthy posture' : 'Attention needed') : 'Awaiting audits'}
+          isPositive={metrics.overallScore >= 80}
+          trendDescription={metrics.hasReviews ? 'based on live reviews' : 'review copy to set baseline'}
           icon={ShieldCheck}
           highlight={true}
           onClick={() => {
@@ -231,9 +212,9 @@ export const OverviewPage: React.FC = () => {
         <StatCard
           label="Content Reviewed"
           value={metrics.contentReviewedCount}
-          change="+18%"
+          change={metrics.contentReviewedCount > 0 ? `${metrics.contentReviewedCount} audited` : 'No audits yet'}
           isPositive={true}
-          trendDescription="assets this month"
+          trendDescription="assets scanned in org"
           icon={FileCheck2}
           onClick={() => navigate('/review-history')}
         />
@@ -241,32 +222,38 @@ export const OverviewPage: React.FC = () => {
         <StatCard
           label="Pending Approvals"
           value={metrics.pendingApprovalsCount}
-          change={`${metrics.pendingApprovalsCount} urgent`}
+          change={metrics.pendingApprovalsCount > 0 ? `${metrics.pendingApprovalsCount} awaiting sign-off` : 'All cleared'}
           isPositive={metrics.pendingApprovalsCount <= 2}
-          trendDescription="awaiting review"
+          trendDescription="requires managerial review"
           icon={Users2}
           onClick={() => navigate('/team-approvals')}
         />
 
         <StatCard
-          label="Critical Issues"
-          value={metrics.criticalIssuesCount}
-          change={metrics.criticalIssuesCount > 0 ? `${metrics.criticalIssuesCount} blocking` : '0 blocking'}
-          isPositive={metrics.criticalIssuesCount === 0}
-          trendDescription="requires action"
-          icon={AlertTriangle}
-          onClick={() => navigate('/team-approvals')}
+          label="Approved Brand Rules"
+          value={metrics.approvedRulesCount}
+          change={metrics.pendingCandidatesCount > 0 ? `${metrics.pendingCandidatesCount} pending candidates` : 'All rules active'}
+          isPositive={metrics.pendingCandidatesCount === 0}
+          trendDescription="authoritative rules"
+          icon={BookOpen}
+          onClick={() => navigate('/brand-guidelines')}
         />
       </div>
 
       {/* Brand Health & Issues Breakdown */}
       <div id="brand-health-section" className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7">
-          <BrandHealthGauge score={metrics.overallScore} total={100} trend="+4.2 pts" />
+          <BrandHealthGauge
+            score={metrics.overallScore}
+            total={100}
+            hasReviews={metrics.hasReviews}
+            orgName={currentWorkspace?.name || 'Organisation'}
+            activeRulesCount={metrics.approvedRulesCount}
+          />
         </div>
 
         <div className="lg:col-span-5">
-          <IssuesBreakdownChart />
+          <IssuesBreakdownChart issues={metrics.violationsByCategory} />
         </div>
       </div>
 
@@ -275,7 +262,7 @@ export const OverviewPage: React.FC = () => {
         <RecentReviewsTable
           reviews={mappedReviews}
           onSelectReview={handleOpenReview}
-          onOpenSubmitModal={() => setIsSubmitModalOpen(true)}
+          onOpenSubmitModal={() => navigate('/content-review')}
         />
       </div>
 
@@ -283,6 +270,7 @@ export const OverviewPage: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7">
           <RecentActivityFeed
+            activity={metrics.recentActivity}
             onSelectActivityTarget={(targetId) => {
               const found = mappedReviews.find((r) => r.id === targetId)
               if (found) {
@@ -295,6 +283,9 @@ export const OverviewPage: React.FC = () => {
 
         <div className="lg:col-span-5">
           <BrandGuidelinesStatusCard
+            approvedRules={metrics.approvedRulesCount}
+            pendingRules={metrics.pendingCandidatesCount}
+            sourceDocsCount={metrics.sourceDocsCount}
             onManageClick={() => navigate('/brand-guidelines')}
           />
         </div>
@@ -306,13 +297,6 @@ export const OverviewPage: React.FC = () => {
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         onStatusChange={handleStatusChange}
-      />
-
-      {/* Content Submission Modal */}
-      <ContentSubmissionModal
-        isOpen={isSubmitModalOpen}
-        onClose={() => setIsSubmitModalOpen(false)}
-        onAddReview={handleAddNewReview}
       />
     </motion.div>
   )

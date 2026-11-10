@@ -14,12 +14,34 @@ import type { Brand } from '@/types/api'
 import type { Workspace } from '@/types/workspace'
 import { mockWorkspaces } from '@/data/mockWorkspaces'
 
+export interface ViolationCategoryStat {
+  category: string
+  count: number
+  percentage: number
+  severity: string
+  description?: string
+}
+
+export interface DashboardActivityItem {
+  id: string
+  reviewId?: string | null
+  action: string
+  details?: string | null
+  actorName: string
+  actorRole: string
+  timestamp: string
+}
+
 export interface BrandTelemetry {
   overallScore: number
+  hasReviews?: boolean
   activeRulesCount: number
   contentReviewedCount: number
   pendingApprovalsCount: number
   criticalIssuesCount: number
+  uploadedDocumentsCount?: number
+  violationsByCategory?: ViolationCategoryStat[]
+  recentActivity?: DashboardActivityItem[]
   lastUpdated: string
 }
 

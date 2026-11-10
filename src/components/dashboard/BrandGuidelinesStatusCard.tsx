@@ -2,18 +2,24 @@ import React from 'react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { mockGuidelinesTelemetry } from '@/data/mockOverview'
-import { BookOpen, CheckCircle, Clock, Database, ArrowRight, RefreshCw } from 'lucide-react'
+import { BookOpen, CheckCircle, Clock, Database, ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 interface BrandGuidelinesStatusCardProps {
+  approvedRules?: number
+  pendingRules?: number
+  sourceDocsCount?: number
   onManageClick?: () => void
 }
 
 export const BrandGuidelinesStatusCard: React.FC<BrandGuidelinesStatusCardProps> = ({
+  approvedRules = 0,
+  pendingRules = 0,
+  sourceDocsCount = 0,
   onManageClick,
 }) => {
-  const { approvedRules, pendingRules, totalRules, lastUpdated, knowledgeExtraction } = mockGuidelinesTelemetry
+  const totalRules = approvedRules + pendingRules
+  const approvalPct = totalRules > 0 ? Math.round((approvedRules / totalRules) * 100) : 100
 
   return (
     <Card className="h-full border-border/80 flex flex-col justify-between">
@@ -28,8 +34,8 @@ export const BrandGuidelinesStatusCard: React.FC<BrandGuidelinesStatusCardProps>
               Rule engine parameters and vector extraction status
             </CardDescription>
           </div>
-          <Badge variant="success" className="text-[10px] font-medium py-0.5">
-            Active v2.4
+          <Badge variant={sourceDocsCount > 0 ? "success" : "neutral"} className="text-[10px] font-medium py-0.5">
+            {sourceDocsCount > 0 ? 'Active Memory' : 'No Guidelines'}
           </Badge>
         </div>
       </CardHeader>
@@ -48,8 +54,8 @@ export const BrandGuidelinesStatusCard: React.FC<BrandGuidelinesStatusCardProps>
             </div>
             <div className="w-full bg-slate-200 h-1.5 rounded-full mt-2 overflow-hidden">
               <div
-                className="bg-emerald-600 h-full rounded-full"
-                style={{ width: `${(approvedRules / totalRules) * 100}%` }}
+                className="bg-emerald-600 h-full rounded-full transition-all duration-500"
+                style={{ width: `${approvalPct}%` }}
               />
             </div>
           </div>
@@ -61,10 +67,10 @@ export const BrandGuidelinesStatusCard: React.FC<BrandGuidelinesStatusCardProps>
             </div>
             <div className="text-2xl font-bold text-slate-900 mt-1">
               {pendingRules}
-              <span className="text-xs text-slate-400 font-normal"> in review</span>
+              <span className="text-xs text-slate-400 font-normal"> candidate{pendingRules === 1 ? '' : 's'}</span>
             </div>
             <p className="text-[10px] text-amber-700 mt-2 font-medium">
-              Requires brand lead sign-off
+              {pendingRules > 0 ? 'Requires Admin sign-off' : 'All candidates reviewed'}
             </p>
           </div>
         </div>
@@ -75,44 +81,45 @@ export const BrandGuidelinesStatusCard: React.FC<BrandGuidelinesStatusCardProps>
             <div className="flex items-center gap-2">
               <Database className="w-3.5 h-3.5 text-blue-600" />
               <span className="text-xs font-semibold text-slate-800">
-                Knowledge Extraction
+                Knowledge Ingestion
               </span>
             </div>
-            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              {knowledgeExtraction.status}
+            <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded border ${
+              sourceDocsCount > 0
+                ? 'text-emerald-700 bg-emerald-50 border-emerald-100'
+                : 'text-slate-600 bg-slate-100 border-slate-200'
+            }`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${sourceDocsCount > 0 ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+              {sourceDocsCount > 0 ? 'Indexed & Synced' : 'Awaiting Documents'}
             </span>
           </div>
 
           <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-500 pt-1 border-t border-slate-100">
             <div>
-              <span className="text-slate-400">Indexed Chunks: </span>
-              <strong className="text-slate-700">{knowledgeExtraction.indexedChunks}</strong>
+              <span className="text-slate-400">Indexed Docs: </span>
+              <strong className="text-slate-700">{sourceDocsCount} source{sourceDocsCount === 1 ? '' : 's'}</strong>
             </div>
             <div className="text-right">
-              <span className="text-slate-400">Model: </span>
-              <strong className="text-slate-700">{knowledgeExtraction.version}</strong>
+              <span className="text-slate-400">Memory Engine: </span>
+              <strong className="text-slate-700">BrandShield v2.0</strong>
             </div>
-          </div>
-
-          <div className="text-[10px] text-slate-400 flex items-center justify-between pt-1">
-            <span>Last rule sync: {lastUpdated}</span>
-            <span>Extracted {knowledgeExtraction.lastRun}</span>
           </div>
         </div>
 
-        {/* Action Button */}
-        <Link to="/brand-guidelines" className="block w-full">
+        <div className="pt-2 flex items-center justify-between">
+          <span className="text-xs text-slate-500">
+            {sourceDocsCount === 0 ? 'Upload PDF or DOCX brand manuals' : `${approvedRules} authoritative rules active`}
+          </span>
           <Button
             variant="outline"
             size="sm"
-            className="w-full text-xs font-medium justify-between hover:bg-slate-50"
             onClick={onManageClick}
+            className="text-xs gap-1.5"
           >
-            <span>Manage Guidelines & Extraction</span>
-            <ArrowRight className="w-3.5 h-3.5" />
+            <span>Manage Guidelines</span>
+            <ArrowRight className="w-3.5 h-3.5 text-slate-500" />
           </Button>
-        </Link>
+        </div>
       </CardContent>
     </Card>
   )

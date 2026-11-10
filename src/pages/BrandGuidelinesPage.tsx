@@ -9,6 +9,7 @@ import { PendingExtractionTab } from '@/components/guidelines/PendingExtractionT
 import { SourceDocumentsTab } from '@/components/guidelines/SourceDocumentsTab'
 import { RuleEditModal } from '@/components/guidelines/RuleEditModal'
 import { useGovernance } from '@/context/GovernanceContext'
+import { useAuth } from '@/context/AuthContext'
 import type {
   ApprovedRule,
   PendingCandidateRule,
@@ -27,6 +28,7 @@ type TabType = 'overview' | 'approved' | 'pending' | 'documents'
 
 export const BrandGuidelinesPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('overview')
+  const { user } = useAuth()
 
   const {
     approvedRules,
@@ -62,7 +64,7 @@ export const BrandGuidelinesPage: React.FC = () => {
       sourceDocument: candidate.sourceDocument,
       sourcePage: candidate.sourceSection,
       lastUpdated: 'Draft',
-      updatedBy: 'Sarah Chen',
+      updatedBy: user?.name || 'Workspace Admin',
     })
     setIsEditModalOpen(true)
   }

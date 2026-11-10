@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useWorkspace } from '@/hooks/useWorkspace'
+import { useAuth } from '@/context/AuthContext'
 import { useToast } from '@/context/ToastContext'
 import {
   Shield,
@@ -40,6 +41,7 @@ interface InvoiceRecord {
 
 export const SettingsPage: React.FC = () => {
   const { currentWorkspace } = useWorkspace()
+  const { user } = useAuth()
   const { success, info } = useToast()
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
@@ -168,14 +170,14 @@ export const SettingsPage: React.FC = () => {
                   <label className="text-xs font-semibold text-slate-700">Primary Brand Domain</label>
                   <div className="relative">
                     <Globe className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
-                    <Input defaultValue="novapay.io" className="pl-9" />
+                    <Input defaultValue={`${currentWorkspace?.slug || 'company'}.io`} className="pl-9" />
                   </div>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-700">Governance Lead Email</label>
                   <div className="relative">
                     <Mail className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
-                    <Input defaultValue="sarah.chen@novapay.io" className="pl-9" />
+                    <Input defaultValue={user?.email || 'lead@brandshield.local'} className="pl-9" />
                   </div>
                 </div>
               </div>
@@ -479,7 +481,7 @@ export const SettingsPage: React.FC = () => {
                   </Button>
                 </div>
                 <div className="text-[11px] text-slate-500">
-                  Billing Contact: <strong className="text-slate-700">billing@novapay.io</strong>
+                  Billing Contact: <strong className="text-slate-700">billing@{currentWorkspace?.slug || 'company'}.io</strong>
                 </div>
               </CardContent>
             </Card>
@@ -490,7 +492,7 @@ export const SettingsPage: React.FC = () => {
                 <CardDescription className="text-xs">Corporate tax and legal invoice recipient.</CardDescription>
               </CardHeader>
               <CardContent className="text-xs text-slate-600 space-y-1">
-                <p className="font-semibold text-slate-800">NovaPay Technologies, Inc.</p>
+                <p className="font-semibold text-slate-800">{currentWorkspace?.name || 'Organisation'} Inc.</p>
                 <p>100 Montgomery Street, Suite 1400</p>
                 <p>San Francisco, CA 94104, United States</p>
                 <p className="text-slate-400 text-[11px] pt-1">VAT / Tax ID: US-EIN-94-2849102</p>
@@ -604,7 +606,7 @@ export const SettingsPage: React.FC = () => {
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-700">Webhook Destination URL</label>
                 <div className="flex gap-2">
-                  <Input defaultValue="https://api.novapay.io/webhooks/brand-governance" />
+                  <Input defaultValue={`https://api.${currentWorkspace?.slug || 'company'}.io/webhooks/brand-governance`} />
                   <Button
                     variant="outline"
                     size="sm"
@@ -648,14 +650,14 @@ export const SettingsPage: React.FC = () => {
                     <span>Workspace Governance Roster</span>
                   </CardTitle>
                   <CardDescription className="text-xs">
-                    Assigned roles, permissions, and sign-off authority for NovaPay.
+                    Assigned roles, permissions, and sign-off authority for {currentWorkspace?.name || 'Organisation'}.
                   </CardDescription>
                 </div>
                 <Button
                   variant="primaryBlue"
                   size="sm"
                   className="text-xs"
-                  onClick={() => info('Invite link generated and copied to clipboard.', 'Invite Member')}
+                  onClick={() => info(`Invite link generated for ${currentWorkspace?.name || 'workspace'}.`, 'Invite Member')}
                 >
                   Invite Colleague
                 </Button>
@@ -674,20 +676,33 @@ export const SettingsPage: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-border/60">
                     {[
-                      { name: 'Sarah Chen', email: 'sarah.chen@novapay.io', role: 'Brand Lead', auth: 'Tier 3 (Final Authorization)', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80' },
-                      { name: 'Marcus Vance', email: 'marcus@novapay.io', role: 'Senior Compliance Reviewer', auth: 'Tier 2 (Legal & Claims)', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80' },
-                      { name: 'Elena Rostova', email: 'elena@novapay.io', role: 'Creative Director', auth: 'Tier 1 (Visual & Identity)', avatar: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=100&auto=format&fit=crop&q=80' },
-                      { name: 'David Kim', email: 'david@novapay.io', role: 'Product Marketing Manager', auth: 'Submit & Remediate', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80' },
+                      {
+                        name: user?.name || 'Authenticated User',
+                        email: user?.email || 'admin@brandshield.local',
+                        role: currentWorkspace?.role || 'Admin',
+                        auth: currentWorkspace?.role === 'Admin'
+                          ? 'Admin (Full Sign-off & Authoritative Rule Approval)'
+                          : currentWorkspace?.role === 'Reviewer'
+                          ? 'Reviewer (Review Approval & Revisions)'
+                          : 'Employee (Submit Copy & Apply Fixes)',
+                        avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name || 'User'}`,
+                        isCurrent: true,
+                      },
                     ].map(member => (
                       <tr key={member.email} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2.5">
                             <Avatar className="w-7 h-7">
                               <AvatarImage src={member.avatar} alt={member.name} />
-                              <AvatarFallback className="text-[10px]">{member.name.slice(0, 2)}</AvatarFallback>
+                              <AvatarFallback className="text-[10px]">{member.name.slice(0, 2).toUpperCase()}</AvatarFallback>
                             </Avatar>
                             <div>
-                              <div className="font-semibold text-slate-900">{member.name}</div>
+                              <div className="font-semibold text-slate-900 flex items-center gap-1.5">
+                                <span>{member.name}</span>
+                                {member.isCurrent && (
+                                  <span className="text-[9px] px-1.5 py-0.2 bg-blue-100 text-blue-800 rounded font-normal">You</span>
+                                )}
+                              </div>
                               <div className="text-[11px] text-slate-400">{member.email}</div>
                             </div>
                           </div>

@@ -142,21 +142,21 @@ export const TeamApprovalsPage: React.FC = () => {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
           <div className="p-2.5 rounded-lg bg-white/5 border border-white/10">
-            <span className="text-[10px] text-blue-300 font-mono block">TIER 1 • CREATIVE AUDIT</span>
-            <strong className="text-white">Elena Rostova</strong>
-            <span className="text-[11px] text-slate-400 block mt-0.5">Logo, clearspace & visual palette</span>
+            <span className="text-[10px] text-blue-300 font-mono block">TIER 1 • AUTOMATED AI SENTINEL</span>
+            <strong className="text-white">BrandShield AI</strong>
+            <span className="text-[11px] text-slate-400 block mt-0.5">Deterministic regex & LLM rule scan</span>
           </div>
 
           <div className="p-2.5 rounded-lg bg-white/5 border border-white/10">
-            <span className="text-[10px] text-blue-300 font-mono block">TIER 2 • LEGAL & CLAIMS</span>
-            <strong className="text-white">Marcus Vance</strong>
-            <span className="text-[11px] text-slate-400 block mt-0.5">Statutory disclaimers & FX terms</span>
+            <span className="text-[10px] text-blue-300 font-mono block">TIER 2 • WORKSPACE REVIEWER</span>
+            <strong className="text-white">Reviewer / Admin</strong>
+            <span className="text-[11px] text-slate-400 block mt-0.5">Compliance inspection & change requests</span>
           </div>
 
           <div className="p-2.5 rounded-lg bg-white/5 border border-white/10">
-            <span className="text-[10px] text-blue-300 font-mono block">TIER 3 • EXECUTIVE SIGN-OFF</span>
-            <strong className="text-white">Sarah Chen (Brand Lead)</strong>
-            <span className="text-[11px] text-slate-400 block mt-0.5">Final publishing authorization token</span>
+            <span className="text-[10px] text-blue-300 font-mono block">TIER 3 • EXECUTIVE ADMIN</span>
+            <strong className="text-white">{currentWorkspace?.role === 'Admin' ? (user?.name ? `${user.name} (You)` : 'Workspace Admin') : 'Workspace Admin'}</strong>
+            <span className="text-[11px] text-slate-400 block mt-0.5">Authoritative approval & rule governance</span>
           </div>
         </div>
       </div>

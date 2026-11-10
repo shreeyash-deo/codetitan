@@ -160,10 +160,25 @@ def get_brand_telemetry(
     stats = dashboard_service.get_dashboard_stats(db, ws_id)
     return {
         "overallScore": int(stats.average_compliance_score),
+        "hasReviews": stats.has_reviews,
         "activeRulesCount": stats.total_approved_brand_rules,
         "contentReviewedCount": stats.total_reviews,
         "pendingApprovalsCount": stats.pending_approvals,
         "criticalIssuesCount": stats.critical_findings,
+        "uploadedDocumentsCount": stats.uploaded_documents,
+        "violationsByCategory": [v.model_dump() for v in stats.violations_by_category],
+        "recentActivity": [
+            {
+                "id": f"act-{a.id}",
+                "reviewId": str(a.review_id) if a.review_id else None,
+                "action": a.action,
+                "details": a.details,
+                "actorName": a.user.name if a.user else "System",
+                "actorRole": getattr(a.user, "role", "Member") if a.user else "System",
+                "timestamp": a.created_at.strftime("%b %d, %H:%M"),
+            }
+            for a in stats.recent_activity
+        ],
         "lastUpdated": datetime.now(timezone.utc).strftime("%b %d, %H:%M UTC"),
     }
 
@@ -379,10 +394,10 @@ def get_source_documents(
             "id": str(d.id),
             "name": d.filename,
             "format": "DOCX" if d.filename.lower().endswith(".docx") else "PDF",
-            "size": f"{round(d.file_size / (1024*1024), 1)} MB" if d.file_size else "1.1 MB",
+            "size": "1.1 MB",
             "pages": 14,
-            "uploadedAt": d.created_at.strftime("%b %d, %Y"),
-            "uploadedBy": "Sarah Chen (Brand Lead)",
+            "uploadedAt": (getattr(d, "uploaded_at", None) or getattr(d, "created_at", None) or datetime.now()).strftime("%b %d, %Y"),
+            "uploadedBy": current_user.name,
             "status": d.status,
             "extractedCandidatesCount": cand_count,
             "approvedRulesCount": appr_count,
@@ -423,7 +438,6 @@ async def upload_brand_document(
         workspace_id=ws_id,
         filename=file.filename,
         file_path=file_path,
-        file_size=len(file_bytes),
         extracted_text=extracted_text,
         status="extracted",
     )
@@ -432,16 +446,37 @@ async def upload_brand_document(
     db.refresh(doc)
 
     # Automatically extract brand rules from the document text
-    extracted_candidates = rule_service.extract_and_create_rules(db=db, document_id=doc.id)
+    extracted_candidates = []
+    if doc.extracted_text:
+        try:
+            from app.services.ai.ai_service import ai_service
+            candidates = ai_service.extract_rules_from_text(doc.extracted_text)
+            extracted_candidates = rule_service.save_extracted_rules(
+                db=db,
+                workspace_id=ws_id,
+                document_id=doc.id,
+                candidates=candidates,
+            )
+        except Exception:
+            extracted_candidates = []
+
+    # Record governance activity
+    db.add(ReviewActivity(
+        workspace_id=ws_id,
+        user_id=current_user.id,
+        action="Guideline Uploaded",
+        details=f"Uploaded brand guideline '{doc.filename}' with {len(extracted_candidates)} candidate rules extracted.",
+    ))
+    db.commit()
 
     return {
         "id": str(doc.id),
         "name": doc.filename,
         "format": "DOCX" if doc.filename.lower().endswith(".docx") else "PDF",
-        "size": f"{round(doc.file_size / (1024*1024), 1)} MB",
+        "size": f"{round(len(file_bytes) / (1024*1024), 1)} MB" if len(file_bytes) > 0 else "0.1 MB",
         "pages": 12,
         "uploadedAt": "Today",
-        "uploadedBy": "Sarah Chen (Brand Lead)",
+        "uploadedBy": current_user.name,
         "status": "extracted",
         "extractedCandidatesCount": len(extracted_candidates),
         "approvedRulesCount": 0,

@@ -13,6 +13,7 @@ import {
   authService,
   apiClient,
 } from '@/services'
+import { brandService, type BrandTelemetry, type ViolationCategoryStat, type DashboardActivityItem } from '@/services/brandService'
 import { mockHistoricalReviews } from '@/data/mockHistoricalReviews'
 import {
   initialApprovedRules,
@@ -53,12 +54,15 @@ interface GovernanceContextValue {
   // Telemetry Metrics
   metrics: {
     overallScore: number
+    hasReviews: boolean
     contentReviewedCount: number
     pendingApprovalsCount: number
     criticalIssuesCount: number
     approvedRulesCount: number
     pendingCandidatesCount: number
     sourceDocsCount: number
+    violationsByCategory: ViolationCategoryStat[]
+    recentActivity: DashboardActivityItem[]
   }
 }
 
@@ -87,6 +91,7 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [sourceDocuments, setSourceDocuments] = useState<SourceDocument[]>(
     apiClient.isMockMode() ? initialSourceDocuments : []
   )
+  const [telemetry, setTelemetry] = useState<BrandTelemetry | null>(null)
 
   const refreshData = useCallback(async () => {
     if (apiClient.isMockMode()) return
@@ -95,6 +100,7 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setPendingCandidates([])
       setSourceDocuments([])
       setReviews([])
+      setTelemetry(null)
       setIsLoading(false)
       return
     }
@@ -104,11 +110,12 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     try {
       const brandId = currentWorkspace.id
 
-      const [rulesData, candidatesData, docsData, historyData] = await Promise.all([
+      const [rulesData, candidatesData, docsData, historyData, telemetryData] = await Promise.all([
         guidelineService.getApprovedRules(brandId),
         guidelineService.getPendingCandidates(brandId),
         guidelineService.getSourceDocuments(brandId),
         historyService.getReviewHistory({ brandId }),
+        brandService.getBrandTelemetry(brandId).catch(() => null),
       ])
 
       if (rulesData) {
@@ -122,6 +129,9 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       if (historyData) {
         setReviews(historyData as unknown as HistoricalReviewRecord[])
+      }
+      if (telemetryData) {
+        setTelemetry(telemetryData)
       }
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.detail || err?.message || 'Failed to fetch live governance data from backend'
@@ -481,26 +491,30 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Derived Telemetry
   const metrics = useMemo(() => {
-    const pendingReviews = reviews.filter((r) => r.approvalStatus === 'pending' || r.approvalStatus === 'critical_issues').length
-    const criticalIssues = reviews.filter((r) => r.approvalStatus === 'critical_issues').length
+    const pendingReviews = reviews.filter((r) => r.approvalStatus === 'pending' || r.approvalStatus === 'needs_revision' || r.approvalStatus === 'critical_issues').length
+    const criticalIssues = telemetry?.criticalIssuesCount ?? reviews.reduce((sum, r) => sum + (r.findings?.filter(f => f.severity === 'critical').length || 0), 0)
 
-    let avgScore = 87
-    if (!apiClient.isMockMode()) {
-      avgScore = reviews.length > 0
-        ? Math.round(reviews.reduce((acc, r) => acc + (r.score || 0), 0) / reviews.length)
-        : 100
+    const hasReviews = reviews.length > 0 || (telemetry?.hasReviews ?? false)
+    let avgScore = 100
+    if (reviews.length > 0) {
+      avgScore = Math.round(reviews.reduce((acc, r) => acc + (r.score || 0), 0) / reviews.length)
+    } else if (telemetry && telemetry.hasReviews) {
+      avgScore = telemetry.overallScore
     }
 
     return {
       overallScore: avgScore,
-      contentReviewedCount: apiClient.isMockMode() ? reviews.length + 119 : reviews.length,
+      hasReviews,
+      contentReviewedCount: reviews.length,
       pendingApprovalsCount: pendingReviews,
       criticalIssuesCount: criticalIssues,
       approvedRulesCount: approvedRules.length,
       pendingCandidatesCount: pendingCandidates.length,
       sourceDocsCount: sourceDocuments.length,
+      violationsByCategory: telemetry?.violationsByCategory || [],
+      recentActivity: telemetry?.recentActivity || [],
     }
-  }, [reviews, approvedRules, pendingCandidates, sourceDocuments])
+  }, [reviews, approvedRules, pendingCandidates, sourceDocuments, telemetry])
 
   return (
     <GovernanceContext.Provider
