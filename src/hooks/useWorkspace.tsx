@@ -18,6 +18,9 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (!isAuthenticated || !user) {
       setWorkspaces([])
       setCurrentWorkspace(null)
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('brandshield_active_workspace_id')
+      }
       setIsLoading(false)
       return
     }
@@ -28,9 +31,12 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const rawList = await apiClient.get<any[]>('/api/v1/workspaces')
       
       const mapped: Workspace[] = rawList.map((ws, idx) => {
-        // Resolve current user's role in this workspace
-        const membership = ws.members?.find((m: any) => String(m.user_id) === String(user.id))
-        const userRole = membership?.role || 'Admin'
+        // Resolve current user's role in this workspace strictly from approved membership
+        // Unresolved identity or membership must NEVER receive elevated Admin privileges
+        const membership = user.id && ws.members
+          ? ws.members.find((m: any) => String(m.user_id) === String(user.id) && m.status === 'approved')
+          : null
+        const userRole = membership?.role || 'Employee'
 
         return {
           id: String(ws.id),

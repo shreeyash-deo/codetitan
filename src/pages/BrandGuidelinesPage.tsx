@@ -79,6 +79,10 @@ export const BrandGuidelinesPage: React.FC = () => {
 
   // Save Rule (handles both new/edited approved rules and edited pending candidates)
   const handleSaveRule = (rule: ApprovedRule) => {
+    if (!isAdmin) {
+      setIsEditModalOpen(false)
+      return
+    }
     if (editingCandidateId) {
       addApprovedRule(rule)
       rejectCandidateRule(editingCandidateId) // removes from pending
@@ -233,8 +237,10 @@ export const BrandGuidelinesPage: React.FC = () => {
           uploadedDocumentsCount={sourceDocuments.length}
           lastUpdated="Live sync"
           workspaceName={currentWorkspace?.name}
+          isAdmin={isAdmin}
           onSwitchTab={(t) => setActiveTab(t)}
           onAddRuleClick={() => {
+            if (!isAdmin) return
             setEditingRule(null)
             setEditingCandidateId(null)
             setIsEditModalOpen(true)

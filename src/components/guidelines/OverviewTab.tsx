@@ -25,6 +25,7 @@ interface OverviewTabProps {
   uploadedDocumentsCount: number
   lastUpdated: string
   workspaceName?: string
+  isAdmin?: boolean
   onSwitchTab: (tabId: 'approved' | 'pending' | 'documents') => void
   onAddRuleClick: () => void
 }
@@ -35,6 +36,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   uploadedDocumentsCount,
   lastUpdated,
   workspaceName,
+  isAdmin = false,
   onSwitchTab,
   onAddRuleClick,
 }) => {
@@ -209,16 +211,18 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
               </CardDescription>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs"
-                onClick={onAddRuleClick}
-              >
-                Add Rule
-              </Button>
-            </div>
+            {isAdmin && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={onAddRuleClick}
+                >
+                  Add Rule
+                </Button>
+              </div>
+            )}
           </div>
         </CardHeader>
 
