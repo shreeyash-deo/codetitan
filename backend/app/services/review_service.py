@@ -112,6 +112,7 @@ class ReviewService:
 
         db.commit()
         db.refresh(review)
+        review.updated_content = review.content
         return review
 
     @staticmethod
@@ -333,6 +334,7 @@ class ReviewService:
 
         db.commit()
         db.refresh(review)
+        review.updated_content = review.content
         return review
 
     @staticmethod
@@ -413,6 +415,7 @@ class ReviewService:
             finding_id=finding.id,
             finding_status=finding.status,
             updated_content=review.content,
+            content=review.content,
             original_content=review.original_content,
             compliance_score=review.compliance_score,
             review_status=review.status,
@@ -489,6 +492,7 @@ class ReviewService:
         db.add(activity)
         db.commit()
         db.refresh(review)
+        review.updated_content = review.content
         return review
 
 

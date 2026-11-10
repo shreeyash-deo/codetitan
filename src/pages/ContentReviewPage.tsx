@@ -186,10 +186,11 @@ export const ContentReviewPage: React.FC = () => {
           title: title.trim() || 'Marketing Asset',
           content: content.trim(),
         })
-        const data = res.data
+        const data = res?.data ?? res
         setRealBackendScore(data.compliance_score)
         setRealSummary(data.summary)
-        setLastAuditedContent(data.content)
+        const newContent = data?.content ?? data?.updated_content ?? content.trim()
+        setLastAuditedContent(newContent)
 
         if (data.audit_status === 'rules_unavailable') {
           setFindings([])
@@ -254,10 +255,11 @@ export const ContentReviewPage: React.FC = () => {
     if (!apiClient.isMockMode() && activeReviewId) {
       try {
         const res: any = await apiClient.post(`/api/v1/reviews/${activeReviewId}/findings/${findingId}/apply`)
-        const data = res.data
-        setContent(data.updated_content)
+        const data = res?.data ?? res
+        const newContent = data?.content ?? data?.updated_content ?? content
+        setContent(newContent)
         setRealBackendScore(data.compliance_score)
-        setLastAuditedContent(data.updated_content)
+        setLastAuditedContent(newContent)
         if (data.findings) {
           setFindings(mapBackendFindings(data.findings))
         }
@@ -334,10 +336,11 @@ export const ContentReviewPage: React.FC = () => {
       setIsSubmitting(true)
       try {
         const res: any = await apiClient.post(`/api/v1/reviews/${activeReviewId}/findings/batch-apply`)
-        const data = res.data
-        setContent(data.content)
+        const data = res?.data ?? res
+        const newContent = data?.content ?? data?.updated_content ?? content
+        setContent(newContent)
         setRealBackendScore(data.compliance_score)
-        setLastAuditedContent(data.content)
+        setLastAuditedContent(newContent)
         if (data.findings) {
           setFindings(mapBackendFindings(data.findings))
         }
@@ -505,9 +508,10 @@ export const ContentReviewPage: React.FC = () => {
           title: title.trim() || 'Marketing Asset',
           content: content.trim(),
         })
-        const data = res.data
+        const data = res?.data ?? res
         setRealBackendScore(data.compliance_score)
-        setLastAuditedContent(data.content)
+        const newContent = data?.content ?? data?.updated_content ?? content.trim()
+        setLastAuditedContent(newContent)
         if (data.findings) {
           setFindings(mapBackendFindings(data.findings))
         }
@@ -559,8 +563,10 @@ export const ContentReviewPage: React.FC = () => {
           const saveRes: any = await apiClient.patch(`/api/v1/reviews/${reviewIdToSubmit}`, {
             content: content,
           })
-          setLastAuditedContent(saveRes.data.content)
-          setRealBackendScore(saveRes.data.compliance_score)
+          const saveData = saveRes?.data ?? saveRes
+          const savedContent = saveData?.content ?? saveData?.updated_content ?? content
+          setLastAuditedContent(savedContent)
+          setRealBackendScore(saveData.compliance_score)
         }
 
         if (reviewIdToSubmit) {

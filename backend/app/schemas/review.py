@@ -62,6 +62,7 @@ class ContentReviewOut(ContentReviewBase):
     findings: Optional[List[FindingOut]] = None
     approvals: Optional[List[ApprovalOut]] = None
     activities: Optional[List[ReviewActivityOut]] = None
+    updated_content: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -79,6 +80,7 @@ class ApplyCorrectionResponse(BaseModel):
     finding_id: int
     finding_status: str
     updated_content: str
+    content: Optional[str] = None
     original_content: str
     compliance_score: int
     review_status: str
