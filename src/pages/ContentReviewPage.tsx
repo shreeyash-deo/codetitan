@@ -47,7 +47,7 @@ export const ContentReviewPage: React.FC = () => {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { currentWorkspace } = useWorkspace()
-  const { approvedRules, sourceDocuments, addReview, refreshData, isLoading: isLoadingGovernance, error: governanceError } = useGovernance()
+  const { approvedRules, sourceDocuments, addReview, refreshData, isLoading: isLoadingGovernance } = useGovernance()
   const { success, warning, info, error: toastError } = useToast()
 
   // Clean, non-prepopulated editor state
@@ -472,10 +472,10 @@ export const ContentReviewPage: React.FC = () => {
 
   // Authoritative rules availability:
   // In results mode, use the backend audit verdict (never false-flag if findings exist).
-  // In idle mode, check whether the workspace has approved guidelines loaded without errors.
+  // In idle mode, check whether the workspace has approved guidelines loaded.
   const isRulesUnavailable = studioState === 'results'
     ? Boolean(realSummary && realSummary.toLowerCase().includes('rules unavailable'))
-    : (!isLoadingGovernance && !governanceError && Array.isArray(approvedRules) && approvedRules.length === 0)
+    : (!isLoadingGovernance && approvedRules !== undefined && approvedRules.length === 0)
 
   // Authoritative compliance score is determined strictly by verified audit results
   // Never calculate score from accepted suggestion count or award 100/100 while violations remain
@@ -851,54 +851,6 @@ export const ContentReviewPage: React.FC = () => {
           )
         }
       />
-
-      {/* Rule Loading Error Banner */}
-      {governanceError && studioState !== 'results' && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 flex items-start justify-between gap-3 shadow-xs">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-            <div>
-              <h4 className="font-semibold text-sm">Failed to Load Brand Guidelines</h4>
-              <p className="text-xs text-rose-800 mt-0.5">
-                Unable to retrieve brand rules from the server ({governanceError}). Please check your connection or retry.
-              </p>
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs bg-white border-rose-300 text-rose-900 hover:bg-rose-100 shrink-0 gap-1"
-            onClick={() => refreshData()}
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Retry</span>
-          </Button>
-        </div>
-      )}
-
-      {/* Brand Rules Unavailable Warning Banner */}
-      {isRulesUnavailable && (
-        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start justify-between gap-3 shadow-xs">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            <div>
-              <h4 className="font-semibold text-sm">Brand Rules Unavailable — Incomplete Audit</h4>
-              <p className="text-xs text-amber-800 mt-0.5">
-                Brand compliance cannot be evaluated because this organisation has no approved brand rules. Approved rules are required to establish a compliance baseline.
-              </p>
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs bg-white border-amber-300 text-amber-900 hover:bg-amber-100 shrink-0 gap-1"
-            onClick={() => navigate('/brand-guidelines')}
-          >
-            <span>Brand Guidelines</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Button>
-        </div>
-      )}
 
       {/* STUDIO MODE 1: SUBMISSION & CONFIGURATION */}
       {studioState === 'idle' && (
