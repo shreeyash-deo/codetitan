@@ -72,6 +72,9 @@ class ApprovalService:
         if not review:
             raise ValueError("Content review not found.")
 
+        if review.status == "approved":
+            raise ValueError("Cannot request approval for an already approved review.")
+
         clean_comment = comment.strip() if comment and comment.strip() else None
 
         # If comment contains an automated submission summary, route it to submission_summary
@@ -106,15 +109,14 @@ class ApprovalService:
 
         review.status = "pending"
 
-        # Check if an "Approval requested" activity already exists to prevent duplicate entries
-        existing_activity = (
+        # Check latest activity to prevent duplicate entries on retry/double-click
+        latest_activity = (
             db.query(ReviewActivity)
-            .filter(
-                ReviewActivity.review_id == review.id,
-                ReviewActivity.action == "Approval requested",
-            )
+            .filter(ReviewActivity.review_id == review.id)
+            .order_by(ReviewActivity.created_at.desc(), ReviewActivity.id.desc())
             .first()
         )
+        should_record_activity = (not latest_activity or latest_activity.action != "Approval requested")
 
         activity_details = (
             submission_summary
@@ -122,7 +124,7 @@ class ApprovalService:
             or f"Submitted by {user.name} for human reviewer sign-off."
         )
 
-        if not existing_activity:
+        if should_record_activity:
             activity = ReviewActivity(
                 review_id=review.id,
                 workspace_id=review.workspace_id,
@@ -131,8 +133,8 @@ class ApprovalService:
                 details=activity_details,
             )
             db.add(activity)
-        elif submission_summary:
-            existing_activity.details = submission_summary
+        elif submission_summary and latest_activity:
+            latest_activity.details = submission_summary
 
         db.commit()
         db.refresh(approval)
@@ -222,35 +224,88 @@ class ApprovalService:
         if approval.status == "approved":
             raise ValueError("Item has already been approved.")
 
-        approval.status = "approved"
-        approval.reviewer_id = reviewer.id
-
         if approval.review_id:
             review = db.query(ContentReview).filter(ContentReview.id == approval.review_id).first()
-            if review:
-                review.status = "approved"
+            if review and review.status == "approved":
+                approval.status = "approved"
+                approval.reviewer_id = reviewer.id
+                db.commit()
+                raise ValueError("Content review has already been approved.")
+
+            # Atomic conditional update
+            rows = db.query(ContentReview).filter(
+                ContentReview.id == approval.review_id,
+                ContentReview.status != "approved"
+            ).update({"status": "approved"}, synchronize_session=False)
+
+            if rows == 0:
+                approval.status = "approved"
+                approval.reviewer_id = reviewer.id
+                db.commit()
+                raise ValueError("Content review has already been approved.")
+
+            # Update all approvals for this review
+            db.query(Approval).filter(
+                Approval.review_id == approval.review_id
+            ).update(
+                {"status": "approved", "reviewer_id": reviewer.id},
+                synchronize_session=False
+            )
+
+            # Prevent duplicate "Review approved" activity
+            existing_act = db.query(ReviewActivity).filter(
+                ReviewActivity.review_id == approval.review_id,
+                ReviewActivity.action == "Review approved"
+            ).first()
+
+            if not existing_act:
                 activity = ReviewActivity(
-                    review_id=review.id,
-                    workspace_id=review.workspace_id,
+                    review_id=approval.review_id,
+                    workspace_id=review.workspace_id if review else ws_id,
                     user_id=reviewer.id,
                     action="Review approved",
                     details=f"Approved by {reviewer.name}.",
                 )
                 db.add(activity)
 
-        if approval.brand_rule_id:
+        elif approval.brand_rule_id:
             rule = db.query(BrandRule).filter(BrandRule.id == approval.brand_rule_id).first()
-            if rule:
-                rule.approval_status = "approved"
+            if rule and rule.approval_status == "approved":
+                approval.status = "approved"
+                approval.reviewer_id = reviewer.id
+                db.commit()
+                raise ValueError("Brand rule has already been approved.")
+
+            rule_rows = db.query(BrandRule).filter(
+                BrandRule.id == approval.brand_rule_id,
+                BrandRule.approval_status != "approved"
+            ).update({"approval_status": "approved"}, synchronize_session=False)
+
+            if rule_rows == 0:
+                approval.status = "approved"
+                approval.reviewer_id = reviewer.id
+                db.commit()
+                raise ValueError("Brand rule has already been approved.")
+
+            existing_act = db.query(ReviewActivity).filter(
+                ReviewActivity.workspace_id == ws_id,
+                ReviewActivity.action == "Brand rule approved",
+                ReviewActivity.details.like(f"%'{rule.title}' approved%") if rule else ReviewActivity.details.like(f"%Rule {approval.brand_rule_id}%")
+            ).first()
+
+            if not existing_act:
+                rule_title = rule.title if rule else f"Rule {approval.brand_rule_id}"
                 activity = ReviewActivity(
                     review_id=None,
-                    workspace_id=rule.workspace_id,
+                    workspace_id=ws_id,
                     user_id=reviewer.id,
                     action="Brand rule approved",
-                    details=f"Rule '{rule.title}' approved as official brand knowledge by {reviewer.name}.",
+                    details=f"Rule '{rule_title}' approved as official brand knowledge by {reviewer.name}.",
                 )
                 db.add(activity)
 
+        approval.status = "approved"
+        approval.reviewer_id = reviewer.id
         db.commit()
         db.refresh(approval)
         return approval
@@ -269,25 +324,38 @@ class ApprovalService:
         if not comment or not comment.strip():
             raise ValueError("Requesting changes requires specific feedback instructions.")
 
+        clean_comment = comment.strip()
+
         if approval.status == "approved":
             raise ValueError("Cannot request changes on an already approved item.")
 
-        approval.status = "changes_requested"
-        approval.comment = comment.strip()
-        approval.reviewer_id = reviewer.id
-
         if approval.review_id:
             review = db.query(ContentReview).filter(ContentReview.id == approval.review_id).first()
+            if review and review.status == "approved":
+                raise ValueError("Cannot request changes on an already approved review.")
+
+            is_already_revision = (review.status == "needs_revision") if review else False
             if review:
                 review.status = "needs_revision"
+
+            approval.status = "changes_requested"
+            approval.comment = clean_comment
+            approval.reviewer_id = reviewer.id
+
+            if not is_already_revision:
                 activity = ReviewActivity(
                     review_id=review.id,
                     workspace_id=review.workspace_id,
                     user_id=reviewer.id,
                     action="Changes requested",
-                    details=comment.strip(),
+                    details=clean_comment,
                 )
                 db.add(activity)
+
+        elif approval.brand_rule_id:
+            approval.status = "changes_requested"
+            approval.comment = clean_comment
+            approval.reviewer_id = reviewer.id
 
         db.commit()
         db.refresh(approval)
@@ -307,33 +375,54 @@ class ApprovalService:
         if not reason or not reason.strip():
             raise ValueError("Rejection requires a documented reason.")
 
-        approval.status = "rejected"
-        approval.comment = reason.strip()
-        approval.reviewer_id = reviewer.id
+        clean_reason = reason.strip()
+
+        if approval.status == "approved":
+            raise ValueError("Cannot reject an already approved item.")
 
         if approval.review_id:
             review = db.query(ContentReview).filter(ContentReview.id == approval.review_id).first()
+            if review and review.status == "approved":
+                raise ValueError("Cannot reject an already approved review.")
+
+            is_already_rejected = (review.status == "rejected") if review else False
             if review:
                 review.status = "rejected"
+
+            approval.status = "rejected"
+            approval.comment = clean_reason
+            approval.reviewer_id = reviewer.id
+
+            if not is_already_rejected:
                 activity = ReviewActivity(
                     review_id=review.id,
                     workspace_id=review.workspace_id,
                     user_id=reviewer.id,
                     action="Review rejected",
-                    details=reason.strip(),
+                    details=clean_reason,
                 )
                 db.add(activity)
 
-        if approval.brand_rule_id:
+        elif approval.brand_rule_id:
             rule = db.query(BrandRule).filter(BrandRule.id == approval.brand_rule_id).first()
+            if rule and rule.approval_status == "approved":
+                raise ValueError("Cannot reject an already approved brand rule.")
+
+            is_already_rejected = (rule.approval_status == "rejected") if rule else False
             if rule:
                 rule.approval_status = "rejected"
+
+            approval.status = "rejected"
+            approval.comment = clean_reason
+            approval.reviewer_id = reviewer.id
+
+            if not is_already_rejected:
                 activity = ReviewActivity(
                     review_id=None,
-                    workspace_id=rule.workspace_id,
+                    workspace_id=ws_id,
                     user_id=reviewer.id,
                     action="Brand rule rejected",
-                    details=reason.strip(),
+                    details=clean_reason,
                 )
                 db.add(activity)
 

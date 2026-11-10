@@ -857,11 +857,66 @@ def approve_content_by_item(
 
     comment = (payload or {}).get("comment")
 
-    # 1. Check if ID matches an Approval ticket
+    # 1. Check if ID matches a ContentReview directly (standard path from frontend governance desk)
+    review = db.query(ContentReview).filter(ContentReview.id == parsed_id).first()
+    if review:
+        verify_workspace_reviewer_or_admin_in_compat(db, review.workspace_id, current_user.id)
+
+        if review.status == "approved":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Content review has already been approved.",
+            )
+
+        # Atomic conditional update ensures only one concurrent request transitions state
+        rows = db.query(ContentReview).filter(
+            ContentReview.id == review.id,
+            ContentReview.status != "approved"
+        ).update({"status": "approved"}, synchronize_session=False)
+
+        if rows == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Content review has already been approved.",
+            )
+
+        # Update all associated approval records for this review
+        db.query(Approval).filter(
+            Approval.review_id == review.id
+        ).update(
+            {"status": "approved", "reviewer_id": current_user.id, "comment": comment},
+            synchronize_session=False
+        )
+
+        # Prevent duplicate approval activity record
+        existing_act = db.query(ReviewActivity).filter(
+            ReviewActivity.review_id == review.id,
+            ReviewActivity.action == "Review approved"
+        ).first()
+
+        if not existing_act:
+            activity = ReviewActivity(
+                review_id=review.id,
+                workspace_id=review.workspace_id,
+                user_id=current_user.id,
+                action="Review approved",
+                details=comment or f"Certified and approved by {current_user.name}.",
+            )
+            db.add(activity)
+
+        db.commit()
+
+        return {
+            "id": review.id,
+            "status": "approved",
+            "success": True,
+            "certificateId": f"CERT-BS-2026-{1000 + review.id}",
+            "review_id": review.id,
+        }
+
+    # 2. Check if ID matches an Approval ticket (e.g. brand rule approval or ticket-scoped endpoint)
     approval = db.query(Approval).filter(Approval.id == parsed_id).first()
     if approval:
-        if approval.status == "approved":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Item has already been approved.")
         ws_id = approval_service.get_approval_workspace_id(db, approval)
         if ws_id is not None:
             verify_workspace_reviewer_or_admin_in_compat(db, ws_id, current_user.id)
@@ -880,38 +935,7 @@ def approve_content_by_item(
         except ValueError as err:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
 
-    # 2. Check if ID matches a ContentReview directly
-    review = review_service.get_by_id(db, parsed_id)
-    if not review:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request or review not found")
-
-    verify_workspace_reviewer_or_admin_in_compat(db, review.workspace_id, current_user.id)
-
-    review.status = "approved"
-    open_approvals = db.query(Approval).filter(Approval.review_id == parsed_id, Approval.status == "pending").all()
-    for appr in open_approvals:
-        appr.status = "approved"
-        appr.reviewer_id = current_user.id
-        if comment:
-            appr.comment = comment
-
-    activity = ReviewActivity(
-        review_id=review.id,
-        workspace_id=review.workspace_id,
-        user_id=current_user.id,
-        action="Review approved",
-        details=comment or f"Certified and approved by {current_user.name}.",
-    )
-    db.add(activity)
-    db.commit()
-
-    return {
-        "id": review.id,
-        "status": "approved",
-        "success": True,
-        "certificateId": f"CERT-BS-2026-{1000 + review.id}",
-        "review_id": review.id,
-    }
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request or review not found")
 
 
 @router.post("/approvals/{review_id}/request-changes", summary="Request changes on review")
@@ -928,27 +952,53 @@ def request_changes_by_review(
 
     review = review_service.get_by_id(db, r_id)
     if not review:
+        approval = db.query(Approval).filter(Approval.id == r_id).first()
+        if approval and approval.review_id:
+            review = review_service.get_by_id(db, approval.review_id)
+
+    if not review:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
 
     verify_workspace_reviewer_or_admin_in_compat(db, review.workspace_id, current_user.id)
 
-    review.status = "needs_revision"
-    notes = payload.get("revisionNotes") or payload.get("comment") or "Changes requested by reviewer."
+    if review.status == "approved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot request changes on an already approved review.",
+        )
 
-    open_approvals = db.query(Approval).filter(Approval.review_id == r_id, Approval.status == "pending").all()
+    notes = payload.get("revisionNotes") or payload.get("comment") or payload.get("notes") or "Changes requested by reviewer."
+    clean_notes = str(notes).strip()
+    if not clean_notes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requesting changes requires specific feedback instructions.",
+        )
+
+    is_already_needs_revision = (review.status == "needs_revision")
+
+    review.status = "needs_revision"
+
+    open_approvals = db.query(Approval).filter(
+        Approval.review_id == review.id,
+        Approval.status.in_(["pending", "changes_requested"])
+    ).all()
     for appr in open_approvals:
         appr.status = "changes_requested"
         appr.reviewer_id = current_user.id
-        appr.comment = notes
+        appr.comment = clean_notes
 
-    activity = ReviewActivity(
-        review_id=review.id,
-        workspace_id=review.workspace_id,
-        user_id=current_user.id,
-        action="Changes requested",
-        details=notes,
-    )
-    db.add(activity)
+    # Prevent duplicate activity events on double-click or repeat request-changes
+    if not is_already_needs_revision:
+        activity = ReviewActivity(
+            review_id=review.id,
+            workspace_id=review.workspace_id,
+            user_id=current_user.id,
+            action="Changes requested",
+            details=clean_notes,
+        )
+        db.add(activity)
+
     db.commit()
 
     return {

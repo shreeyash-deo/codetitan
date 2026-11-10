@@ -97,17 +97,27 @@ class RuleService:
     @staticmethod
     def approve_rule(db: Session, rule: BrandRule, reviewer_id: int) -> BrandRule:
         """Mark rule as approved authoritative brand knowledge."""
+        if rule.approval_status == "approved":
+            return rule
+
         rule.approval_status = "approved"
 
-        # Record human governance approval
-        approval = Approval(
-            brand_rule_id=rule.id,
-            submitted_by=None,
-            reviewer_id=reviewer_id,
-            status="approved",
-            comment="Approved by authorized reviewer as official brand rule.",
-        )
-        db.add(approval)
+        # Record human governance approval if not already recorded
+        existing_approval = db.query(Approval).filter(
+            Approval.brand_rule_id == rule.id,
+            Approval.status == "approved"
+        ).first()
+
+        if not existing_approval:
+            approval = Approval(
+                brand_rule_id=rule.id,
+                submitted_by=None,
+                reviewer_id=reviewer_id,
+                status="approved",
+                comment="Approved by authorized reviewer as official brand rule.",
+            )
+            db.add(approval)
+
         db.commit()
         db.refresh(rule)
         return rule

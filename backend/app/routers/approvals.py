@@ -293,24 +293,29 @@ def patch_approval_legacy(
     if not approval:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found.")
 
-    if decision_status == "approved":
-        return approval_service.approve(db=db, approval=approval, reviewer=current_user)
-    elif decision_status == "changes_requested":
-        return approval_service.request_changes(
-            db=db,
-            approval=approval,
-            reviewer=current_user,
-            comment=comment or "Changes requested",
-        )
-    elif decision_status == "rejected":
-        return approval_service.reject(
-            db=db,
-            approval=approval,
-            reviewer=current_user,
-            reason=comment or "Rejected by reviewer",
-        )
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown decision_status: {decision_status}",
-        )
+    try:
+        if decision_status == "approved":
+            return approval_service.approve(db=db, approval=approval, reviewer=current_user)
+        elif decision_status == "changes_requested":
+            return approval_service.request_changes(
+                db=db,
+                approval=approval,
+                reviewer=current_user,
+                comment=comment or "Changes requested",
+            )
+        elif decision_status == "rejected":
+            return approval_service.reject(
+                db=db,
+                approval=approval,
+                reviewer=current_user,
+                reason=comment or "Rejected by reviewer",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown decision_status: {decision_status}",
+            )
+    except PermissionError as perm_err:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(perm_err))
+    except ValueError as val_err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err))
