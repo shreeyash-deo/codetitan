@@ -24,6 +24,7 @@ interface OverviewTabProps {
   pendingApprovalsCount: number
   uploadedDocumentsCount: number
   lastUpdated: string
+  workspaceName?: string
   onSwitchTab: (tabId: 'approved' | 'pending' | 'documents') => void
   onAddRuleClick: () => void
 }
@@ -33,6 +34,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   pendingApprovalsCount,
   uploadedDocumentsCount,
   lastUpdated,
+  workspaceName,
   onSwitchTab,
   onAddRuleClick,
 }) => {
@@ -164,7 +166,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
         <CardContent className="p-5 space-y-4">
           <p className="text-xs text-slate-600 leading-relaxed max-w-3xl">
-            {mockBrandVoiceSummary.description}
+            {workspaceName || 'The organisation'} communicates with authoritative clarity, institutional dignity, and partner-first values. We validate claims with verified evidence and maintain rigorous brand consistency across all public channels.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">

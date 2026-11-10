@@ -712,7 +712,11 @@ def request_changes_by_review(
     db.add(activity)
     db.commit()
 
-    return {"success": True}
+    return {
+        "success": True,
+        "status": "needs_changes",
+        "reviewId": str(review.id),
+    }
 
 
 @router.post("/approvals/{review_id}/comments", summary="Add comment to review")

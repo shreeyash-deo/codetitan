@@ -10,6 +10,7 @@ import { SourceDocumentsTab } from '@/components/guidelines/SourceDocumentsTab'
 import { RuleEditModal } from '@/components/guidelines/RuleEditModal'
 import { useGovernance } from '@/context/GovernanceContext'
 import { useAuth } from '@/context/AuthContext'
+import { useWorkspace } from '@/hooks/useWorkspace'
 import type {
   ApprovedRule,
   PendingCandidateRule,
@@ -29,6 +30,7 @@ type TabType = 'overview' | 'approved' | 'pending' | 'documents'
 export const BrandGuidelinesPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const { user } = useAuth()
+  const { currentWorkspace } = useWorkspace()
 
   const {
     approvedRules,
@@ -197,7 +199,8 @@ export const BrandGuidelinesPage: React.FC = () => {
           totalApprovedRules={approvedRules.length}
           pendingApprovalsCount={pendingCandidates.length}
           uploadedDocumentsCount={sourceDocuments.length}
-          lastUpdated="Today, 2:15 PM"
+          lastUpdated="Live sync"
+          workspaceName={currentWorkspace?.name}
           onSwitchTab={(t) => setActiveTab(t)}
           onAddRuleClick={() => {
             setEditingRule(null)
