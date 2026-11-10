@@ -25,6 +25,8 @@ export const CompareDiffModal: React.FC<CompareDiffModalProps> = ({
 
   if (!isOpen) return null
 
+  const isIdentical = originalContent.trim() === correctedContent.trim()
+
   const handleCopy = () => {
     navigator.clipboard.writeText(correctedContent)
     setCopied(true)
@@ -51,7 +53,9 @@ export const CompareDiffModal: React.FC<CompareDiffModalProps> = ({
                   Version Comparison: Original vs. Corrected
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Review how accepted suggestions remediate brand violations
+                  {isIdentical
+                    ? 'No modifications applied yet — working copy is identical to original submission.'
+                    : 'Review how accepted suggestions remediate brand violations.'}
                 </p>
               </div>
             </div>
@@ -62,8 +66,8 @@ export const CompareDiffModal: React.FC<CompareDiffModalProps> = ({
                   Original: {scoreBefore}/100
                 </Badge>
                 <span className="text-slate-400">→</span>
-                <Badge variant="success" className="text-[10px]">
-                  Remediated: {scoreAfter}/100
+                <Badge variant={isIdentical ? 'outline' : 'success'} className="text-[10px]">
+                  {isIdentical ? `Current: ${scoreAfter}/100` : `Remediated: ${scoreAfter}/100`}
                 </Badge>
               </div>
 
@@ -97,9 +101,9 @@ export const CompareDiffModal: React.FC<CompareDiffModalProps> = ({
             {/* Remediated Draft */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  Governance-Remediated Draft
+                <span className={`text-xs font-semibold flex items-center gap-1.5 ${isIdentical ? 'text-amber-700' : 'text-emerald-700'}`}>
+                  <span className={`w-2 h-2 rounded-full ${isIdentical ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                  {isIdentical ? 'Working Draft (Unmodified)' : 'Governance-Remediated Draft'}
                 </span>
                 <button
                   onClick={handleCopy}
@@ -109,7 +113,9 @@ export const CompareDiffModal: React.FC<CompareDiffModalProps> = ({
                   <span>{copied ? 'Copied' : 'Copy'}</span>
                 </button>
               </div>
-              <div className="p-4 rounded-lg bg-emerald-50/40 border border-emerald-200/80 text-xs font-serif text-slate-800 leading-relaxed min-h-[280px] whitespace-pre-wrap">
+              <div className={`p-4 rounded-lg border text-xs font-serif text-slate-800 leading-relaxed min-h-[280px] whitespace-pre-wrap ${
+                isIdentical ? 'bg-amber-50/30 border-amber-200/70' : 'bg-emerald-50/40 border-emerald-200/80'
+              }`}>
                 {correctedContent}
               </div>
             </div>
@@ -118,7 +124,9 @@ export const CompareDiffModal: React.FC<CompareDiffModalProps> = ({
           {/* Footer Actions */}
           <div className="flex items-center justify-between pt-3 border-t border-border">
             <span className="text-xs text-slate-500">
-              Compliant copy remediates all identified brand and regulatory findings.
+              {isIdentical
+                ? 'Working content has not been modified. Apply suggested corrections or edit text to remediate violations.'
+                : 'Compliant copy remediates identified brand and regulatory findings.'}
             </span>
             <Button variant="primaryBlue" size="sm" onClick={onClose}>
               Return to Studio

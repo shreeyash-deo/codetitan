@@ -236,17 +236,33 @@ class ReviewService:
         original_excerpt = finding.excerpt
         replacement = finding.suggested_correction
 
+        modified = False
         if original_excerpt in review.content:
             review.content = review.content.replace(original_excerpt, replacement, 1)
+            modified = True
         elif original_excerpt == "[Missing Regulatory Disclaimer]" or "disclaimer" in finding.category.lower():
             to_append = replacement if replacement.startswith("\n\n") else f"\n\n{replacement}"
-            if "disclaimer:" not in review.content.lower():
+            clean_disc = " ".join(replacement.replace("\n", " ").split()).lower()
+            clean_content = " ".join(review.content.split()).lower()
+            if clean_disc not in clean_content and "disclaimer:" not in clean_content:
                 review.content = review.content.rstrip() + to_append
+                modified = True
+            elif clean_disc in clean_content or "disclaimer:" in clean_content:
+                # Already present without duplication
+                modified = True
         else:
             # Case-insensitive replacement fallback
             import re
             pattern = re.compile(re.escape(original_excerpt), re.IGNORECASE)
-            review.content = pattern.sub(replacement, review.content, count=1)
+            new_content, count = pattern.subn(replacement, review.content, count=1)
+            if count > 0:
+                review.content = new_content
+                modified = True
+
+        if not modified:
+            raise ValueError(
+                f"Cannot apply correction: Offending excerpt '{original_excerpt}' was not found in current working document."
+            )
 
         finding.status = "applied"
 

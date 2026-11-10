@@ -62,6 +62,7 @@ export const ContentReviewPage: React.FC = () => {
   const [activeReviewId, setActiveReviewId] = useState<string | null>(null)
   const [realBackendScore, setRealBackendScore] = useState<number | null>(null)
   const [realSummary, setRealSummary] = useState<string | null>(null)
+  const [lastAuditedContent, setLastAuditedContent] = useState<string | null>(null)
 
   // Configuration options
   const [strictness, setStrictness] = useState<StrictnessLevel>('standard')
@@ -159,6 +160,7 @@ export const ContentReviewPage: React.FC = () => {
       setActiveReviewId(result.id)
       setRealBackendScore(result.overallScore)
       setRealSummary(result.summary)
+      setLastAuditedContent(content.trim())
 
       if (result.status === 'rules_unavailable' || result.hasApprovedRules === false) {
         setFindings([])
@@ -213,23 +215,60 @@ export const ContentReviewPage: React.FC = () => {
     if (!target) return
 
     const replacement = target.manualReplacement || target.suggestedCorrection || ''
+    const orig = target.originalText
+
+    let wasModified = false
+    let failureDetail = ''
 
     setContent(prev => {
-      if (target.originalText && prev.includes(target.originalText)) {
-        return prev.replace(target.originalText, replacement)
-      }
-      if (replacement.startsWith('\n\nDisclaimer:') || target.originalText === '[Missing Regulatory Disclaimer]') {
+      // 1. Missing disclaimer handling
+      if (orig === '[Missing Regulatory Disclaimer]' || replacement.startsWith('\n\nDisclaimer:')) {
         const toAppend = replacement.startsWith('\n\n') ? replacement : '\n\n' + replacement
+        const cleanDisc = replacement.replace('\n\nDisclaimer:', '').trim().toLowerCase()
+        const cleanPrev = prev.toLowerCase()
+
+        if (cleanPrev.includes('disclaimer:') || (cleanDisc && cleanPrev.includes(cleanDisc))) {
+          // Disclaimer already present; treat as successfully satisfied without duplication
+          wasModified = true
+          return prev
+        }
+        wasModified = true
         return prev.trimEnd() + toAppend
       }
+
+      // 2. Exact match replacement
+      if (orig && prev.includes(orig)) {
+        wasModified = true
+        return prev.replace(orig, replacement)
+      }
+
+      // 3. Case-insensitive / whitespace-tolerant regex replacement
+      if (orig) {
+        const escaped = orig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const regex = new RegExp(escaped, 'i')
+        if (regex.test(prev)) {
+          wasModified = true
+          return prev.replace(regex, replacement)
+        }
+      }
+
+      failureDetail = `Could not locate "${orig}" in working copy. It may have been altered by another edit.`
       return prev
     })
+
+    if (!wasModified) {
+      toastError(
+        failureDetail || `Cannot apply fix: offending text was not found in working copy.`,
+        'Replacement Failed'
+      )
+      return
+    }
 
     setFindings(prev =>
       prev.map(f => (f.id === findingId ? { ...f, status: 'accepted' } : f))
     )
 
-    success(`Accepted correction for "${target.category}". Score updated.`, 'Correction Applied')
+    success(`Accepted correction for "${target.category}". Click 'Recheck Content' to re-verify compliance.`, 'Correction Applied')
   }
 
   // Batch Accept All Suggestions cleanly without toast loops or state corruption
@@ -237,30 +276,64 @@ export const ContentReviewPage: React.FC = () => {
     const pendingToApply = findings.filter(f => f.status === 'pending')
     if (pendingToApply.length === 0) return
 
+    let appliedCount = 0
+    let failedCount = 0
+    const appliedIds = new Set<string>()
+
     setContent(prev => {
       let updated = prev
       let disclaimerToAppend = ''
 
       for (const f of pendingToApply) {
         const repl = f.manualReplacement || f.suggestedCorrection || ''
-        if (f.originalText && updated.includes(f.originalText)) {
-          updated = updated.replace(f.originalText, repl)
-        } else if (repl.startsWith('\n\nDisclaimer:') || f.originalText === '[Missing Regulatory Disclaimer]') {
-          disclaimerToAppend = repl.startsWith('\n\n') ? repl : '\n\n' + repl
+        const orig = f.originalText
+
+        if (orig === '[Missing Regulatory Disclaimer]' || repl.startsWith('\n\nDisclaimer:')) {
+          const toAppend = repl.startsWith('\n\n') ? repl : '\n\n' + repl
+          const cleanDisc = repl.replace('\n\nDisclaimer:', '').trim().toLowerCase()
+          const cleanPrev = updated.toLowerCase()
+
+          if (!cleanPrev.includes('disclaimer:') && (!cleanDisc || !cleanPrev.includes(cleanDisc))) {
+            disclaimerToAppend = toAppend
+          }
+          appliedCount++
+          appliedIds.add(f.id)
+        } else if (orig && updated.includes(orig)) {
+          updated = updated.replace(orig, repl)
+          appliedCount++
+          appliedIds.add(f.id)
+        } else if (orig) {
+          const escaped = orig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          const regex = new RegExp(escaped, 'i')
+          if (regex.test(updated)) {
+            updated = updated.replace(regex, repl)
+            appliedCount++
+            appliedIds.add(f.id)
+          } else {
+            failedCount++
+          }
+        } else {
+          failedCount++
         }
       }
 
-      if (disclaimerToAppend && !updated.includes('Disclaimer:')) {
+      if (disclaimerToAppend) {
         updated = updated.trimEnd() + disclaimerToAppend
       }
       return updated
     })
 
     setFindings(prev =>
-      prev.map(f => (f.status === 'pending' ? { ...f, status: 'accepted' } : f))
+      prev.map(f => (appliedIds.has(f.id) ? { ...f, status: 'accepted' } : f))
     )
 
-    success(`Accepted ${pendingToApply.length} suggestions across draft. Compliance score updated to 100/100.`, 'All Corrections Applied')
+    if (appliedCount > 0 && failedCount === 0) {
+      success(`Applied ${appliedCount} corrections to draft. Click 'Recheck Content' to verify score.`, 'Corrections Applied')
+    } else if (appliedCount > 0 && failedCount > 0) {
+      warning(`Applied ${appliedCount} corrections. ${failedCount} suggestion(s) could not be located in working text.`, 'Partial Application')
+    } else {
+      toastError('Could not match pending suggestions in current working draft.', 'Application Failed')
+    }
   }
 
   const handleRejectSuggestion = (findingId: string) => {
@@ -274,12 +347,25 @@ export const ContentReviewPage: React.FC = () => {
     const target = findings.find(f => f.id === findingId)
     if (!target) return
 
+    let wasModified = false
     setContent(prev => {
       if (prev.includes(target.originalText)) {
+        wasModified = true
         return prev.replace(target.originalText, customReplacement)
+      }
+      const escaped = target.originalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const regex = new RegExp(escaped, 'i')
+      if (regex.test(prev)) {
+        wasModified = true
+        return prev.replace(regex, customReplacement)
       }
       return prev
     })
+
+    if (!wasModified) {
+      toastError(`Could not locate "${target.originalText}" in working draft to replace.`, 'Manual Edit Failed')
+      return
+    }
 
     setFindings(prev =>
       prev.map(f =>
@@ -289,7 +375,7 @@ export const ContentReviewPage: React.FC = () => {
       )
     )
 
-    success('Custom correction applied to working document.', 'Custom Text Applied')
+    success('Custom correction applied to working document. Click \'Recheck Content\' to re-verify compliance.', 'Custom Text Applied')
   }
 
   const handleViewGuideline = (finding: StudioFinding) => {
@@ -297,7 +383,7 @@ export const ContentReviewPage: React.FC = () => {
     setIsGuidelineDrawerOpen(true)
   }
 
-  // Calculate dynamic compliance score based on accepted findings
+  // Calculate dynamic counts based on findings
   const totalFindings = findings.length
   const acceptedCount = findings.filter(f => f.status === 'accepted' || f.status === 'manual').length
   const rejectedCount = findings.filter(f => f.status === 'rejected').length
@@ -310,13 +396,14 @@ export const ContentReviewPage: React.FC = () => {
     ? Boolean(realSummary && realSummary.toLowerCase().includes('rules unavailable'))
     : (!isLoadingGovernance && approvedRules !== undefined && approvedRules.length === 0)
 
-  // Authoritative baseline score from backend; if 0 findings on clean draft, baseline is 100
-  const baselineScore = isRulesUnavailable
+  // Authoritative compliance score is determined strictly by verified audit results
+  // Never calculate score from accepted suggestion count or award 100/100 while violations remain
+  const verifiedScore = isRulesUnavailable
     ? 0
-    : (realBackendScore !== null ? realBackendScore : (totalFindings === 0 ? 100 : 64))
+    : (realBackendScore !== null ? realBackendScore : (totalFindings === 0 ? 100 : 0))
+  const currentScore = verifiedScore
 
-  const scoreBoost = totalFindings > 0 ? Math.round((acceptedCount / totalFindings) * (100 - baselineScore)) : 0
-  const currentScore = isRulesUnavailable ? 0 : Math.min(100, baselineScore + scoreBoost)
+  const isDraftModified = studioState === 'results' && lastAuditedContent !== null && content.trim() !== lastAuditedContent
 
   // Severity counts
   const criticalCount = findings.filter(f => f.severity === 'critical' && f.status === 'pending').length
@@ -748,9 +835,11 @@ export const ContentReviewPage: React.FC = () => {
                 <p className="text-xs text-slate-300">
                   {isRulesUnavailable
                     ? 'Brand rules unavailable. Please approve brand rules in Brand Guidelines to run compliance audits.'
-                    : (acceptedCount > 0
-                        ? `Remediated ${acceptedCount} of ${totalFindings} findings. Current score: ${currentScore}/100.`
-                        : `${findings.length} findings require review before publication.`)}
+                    : (isDraftModified
+                        ? `Draft modified with ${acceptedCount} correction(s). Click "Recheck Content" to re-verify compliance score.`
+                        : (totalFindings > 0
+                            ? `${findings.length} findings identified. Remediate and recheck before publication.`
+                            : 'All brand compliance checks verified. Content ready for publication.'))}
                 </p>
               </div>
 
@@ -762,7 +851,7 @@ export const ContentReviewPage: React.FC = () => {
                     {!isRulesUnavailable && <span className="text-xs text-slate-400 font-normal">/100</span>}
                   </span>
                   <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
-                    {isRulesUnavailable ? 'Incomplete' : 'Score'}
+                    {isRulesUnavailable ? 'Incomplete' : (isDraftModified ? 'Unverified' : 'Verified Score')}
                   </span>
                 </div>
 
@@ -1041,7 +1130,7 @@ export const ContentReviewPage: React.FC = () => {
         correctedContent={content}
         isOpen={isCompareModalOpen}
         onClose={() => setIsCompareModalOpen(false)}
-        scoreBefore={baselineScore}
+        scoreBefore={realBackendScore !== null ? realBackendScore : (totalFindings === 0 ? 100 : 0)}
         scoreAfter={currentScore}
       />
 

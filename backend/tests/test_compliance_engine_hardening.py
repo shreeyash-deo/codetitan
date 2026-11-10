@@ -400,3 +400,149 @@ def test_scenario_13_gemini_client_credential_safety_and_diagnostics():
     # Verify Gemini provider configuration is active
     assert settings.AI_PROVIDER.lower() == "gemini"
     assert settings.GEMINI_MODEL == "gemini-3.6-flash"
+
+
+# ---------------------------------------------------------------------------
+# 14. Failed replacement raises ValueError and does NOT mark finding as applied
+# ---------------------------------------------------------------------------
+def test_scenario_14_failed_replacement_raises_error_and_does_not_mutate_document(db, workspace_with_rules):
+    ws, user, rules = workspace_with_rules
+    sub = ContentReviewSubmission(title="Failed Replacement Test", content=SAMPLE_NON_COMPLIANT_CONTENT, content_type="social_media")
+    review = review_service.submit_and_audit(db, ws.id, user.id, sub)
+
+    # Fabricate a finding with an excerpt that does NOT exist in the working content
+    fake_finding = Finding(
+        review_id=review.id,
+        category="Content restrictions",
+        severity="critical",
+        excerpt="completely non-existent phrase in this text 123456",
+        explanation="Non existent phrase",
+        suggested_correction="something else",
+        confidence=1.0,
+        status="open",
+        guideline_reference="Rule #1: Fake",
+    )
+    db.add(fake_finding)
+    db.commit()
+    db.refresh(fake_finding)
+
+    original_content_before = review.content
+
+    with pytest.raises(ValueError) as exc_info:
+        review_service.apply_correction(db, review.id, fake_finding.id, user.id)
+
+    assert "was not found in current working document" in str(exc_info.value)
+    db.refresh(fake_finding)
+    db.refresh(review)
+    assert fake_finding.status == "open"  # NOT marked applied
+    assert review.content == original_content_before  # Document unchanged
+
+
+# ---------------------------------------------------------------------------
+# 15. Overlapping findings preserve prior modifications
+# ---------------------------------------------------------------------------
+def test_scenario_15_overlapping_findings_preserve_prior_modifications(db, workspace_with_rules):
+    ws, user, rules = workspace_with_rules
+    text_with_overlap = (
+        "Introducing NovaPay Global — guaranteed to double your business revenue overnight! "
+        "Our 100% risk-free payment solution eliminates all fraud."
+    )
+    sub = ContentReviewSubmission(title="Overlap Test", content=text_with_overlap, content_type="social_media")
+    review = review_service.submit_and_audit(db, ws.id, user.id, sub)
+
+    finding_guarantee = next(f for f in review.findings if "guaranteed to double" in f.excerpt)
+    finding_overnight = next(f for f in review.findings if "overnight" in f.excerpt)
+
+    # Apply first fix
+    resp1 = review_service.apply_correction(db, review.id, finding_guarantee.id, user.id)
+    assert "guaranteed to double" not in resp1.updated_content
+    assert "designed to help scale" in resp1.updated_content
+
+    # Apply second fix
+    resp2 = review_service.apply_correction(db, review.id, finding_overnight.id, user.id)
+    assert "designed to help scale" in resp2.updated_content  # First fix preserved
+    assert "overnight" not in resp2.updated_content or "revenue sustainably over time" in resp2.updated_content
+
+
+# ---------------------------------------------------------------------------
+# 16. Disclaimer insertion without duplication
+# ---------------------------------------------------------------------------
+def test_scenario_16_disclaimer_insertion_without_duplication(db, workspace_with_rules):
+    ws, user, rules = workspace_with_rules
+    sub = ContentReviewSubmission(title="Disclaimer Test", content=SAMPLE_NON_COMPLIANT_CONTENT, content_type="social_media")
+    review = review_service.submit_and_audit(db, ws.id, user.id, sub)
+
+    disclaimer_finding = next(f for f in review.findings if "disclaimer" in f.category.lower() or f.excerpt == "[Missing Regulatory Disclaimer]")
+
+    resp1 = review_service.apply_correction(db, review.id, disclaimer_finding.id, user.id)
+    assert "Disclaimer:" in resp1.updated_content
+    count_before = resp1.updated_content.count("Disclaimer:")
+    assert count_before == 1
+
+    # Applying again or applying another disclaimer finding does not duplicate
+    db.refresh(disclaimer_finding)
+    disclaimer_finding.status = "open"  # reset to test duplicate prevention
+    db.commit()
+
+    resp2 = review_service.apply_correction(db, review.id, disclaimer_finding.id, user.id)
+    assert resp2.updated_content.count("Disclaimer:") == 1  # No duplicate disclaimer inserted
+
+
+# ---------------------------------------------------------------------------
+# 17. Compliance score is not 100/100 when violations remain
+# ---------------------------------------------------------------------------
+def test_scenario_17_compliance_score_not_100_when_violations_remain(db, workspace_with_rules):
+    ws, user, rules = workspace_with_rules
+    sub = ContentReviewSubmission(title="Partial Remediation", content=SAMPLE_NON_COMPLIANT_CONTENT, content_type="social_media")
+    review = review_service.submit_and_audit(db, ws.id, user.id, sub)
+
+    # Apply ONLY 1 of 5 findings
+    first_finding = review.findings[0]
+    resp = review_service.apply_correction(db, review.id, first_finding.id, user.id)
+
+    db.refresh(review)
+    assert review.compliance_score < 100
+    assert resp.compliance_score < 100
+    # Other findings remain open
+    open_findings = [f for f in review.findings if f.status == "open"]
+    assert len(open_findings) > 0
+
+
+# ---------------------------------------------------------------------------
+# 18. Rechecking actual document reflects remaining violations
+# ---------------------------------------------------------------------------
+def test_scenario_18_rechecking_actual_document_reflects_remaining_violations(db, workspace_with_rules):
+    ws, user, rules = workspace_with_rules
+    sub = ContentReviewSubmission(title="Recheck Test", content=SAMPLE_NON_COMPLIANT_CONTENT, content_type="social_media")
+    review = review_service.submit_and_audit(db, ws.id, user.id, sub)
+
+    # Apply 1 fix
+    first_finding = review.findings[0]
+    resp = review_service.apply_correction(db, review.id, first_finding.id, user.id)
+
+    # Recheck against full rules engine
+    recheck_res = compliance_engine.run_compliance_audit(resp.updated_content, "social_media", rules)
+    assert recheck_res.compliance_score < 100
+    assert len(recheck_res.findings) > 0
+    assert recheck_res.status in ("needs_changes", "critical_issues")
+
+
+# ---------------------------------------------------------------------------
+# 19. Original content remains strictly immutable through all modifications
+# ---------------------------------------------------------------------------
+def test_scenario_19_original_content_immutable_through_multiple_corrections(db, workspace_with_rules):
+    ws, user, rules = workspace_with_rules
+    sub = ContentReviewSubmission(title="Immutability Test", content=SAMPLE_NON_COMPLIANT_CONTENT, content_type="social_media")
+    review = review_service.submit_and_audit(db, ws.id, user.id, sub)
+
+    initial_original_content = review.original_content
+    for f in list(review.findings):
+        if f.suggested_correction:
+            try:
+                review_service.apply_correction(db, review.id, f.id, user.id)
+            except ValueError:
+                pass
+
+    db.refresh(review)
+    assert review.original_content == initial_original_content
+    assert review.content != review.original_content
