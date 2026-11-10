@@ -176,8 +176,8 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             return {
               ...r,
               approvalStatus: 'approved' as const,
-              score: Math.max(r.score, 95),
-              violationsCount: 0,
+              score: r.score,
+              violationsCount: r.violationsCount,
               comments: r.comments,
               timeline: updatedTimeline,
             }

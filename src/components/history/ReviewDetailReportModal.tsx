@@ -119,9 +119,16 @@ export const ReviewDetailReportModal: React.FC<ReviewDetailReportModalProps> = (
 
             <div>
               <span className="text-[10px] text-slate-400 uppercase font-semibold">Compliance Index</span>
-              <div className="text-sm font-bold text-slate-900 mt-0.5">
-                {review.score}/100
-                <span className="text-[10px] text-slate-400 font-normal ml-1">
+              <div className="flex items-center gap-1.5 text-sm font-bold text-slate-900 mt-0.5">
+                <span>{review.score}/100</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                  (review.auditStatus || 'verified') === 'verified'
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : (review.auditStatus === 'failed' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200')
+                }`}>
+                  {(review.auditStatus || 'verified') === 'verified' ? 'Verified' : review.auditStatus}
+                </span>
+                <span className="text-[10px] text-slate-400 font-normal ml-0.5">
                   ({review.violationsCount} violations)
                 </span>
               </div>
@@ -223,36 +230,66 @@ export const ReviewDetailReportModal: React.FC<ReviewDetailReportModalProps> = (
                   <p className="text-[11px] text-emerald-700 mt-0.5">Asset conforms to all active BrandShield rules.</p>
                 </div>
               ) : (
-                review.findings.map((f) => (
-                  <div
-                    key={f.id}
-                    className="p-3 rounded-lg border border-border bg-white text-xs space-y-2"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant={f.severity === 'critical' ? 'destructive' : 'warning'}
-                          className="text-[9px] uppercase"
-                        >
-                          {f.severity}
-                        </Badge>
-                        <span className="font-semibold text-slate-900">{f.category}</span>
+                review.findings.map((f: any) => {
+                  const offendingText = (f.originalText || f.snippet || '').trim()
+                  const suggestedAlternative = (f.suggestedCorrection || f.suggestion || '').trim()
+                  const ruleRef = f.supportingGuidelineTitle || f.supportingGuidelineCode || f.guideline_reference || ''
+
+                  return (
+                    <div
+                      key={f.id}
+                      className="p-3 rounded-lg border border-border bg-white text-xs space-y-2"
+                    >
+                      <div className="flex items-center justify-between flex-wrap gap-1">
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant={f.severity === 'critical' ? 'destructive' : 'warning'}
+                            className="text-[9px] uppercase"
+                          >
+                            {f.severity}
+                          </Badge>
+                          <span className="font-semibold text-slate-900">{f.category}</span>
+                        </div>
+                        {ruleRef && (
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            {ruleRef}
+                          </span>
+                        )}
                       </div>
-                    </div>
 
-                    <div className="p-2 rounded bg-rose-50/80 border border-rose-200 text-rose-950 font-mono text-[11px]">
-                      <span className="text-rose-500 font-bold mr-1">✕</span>
-                      "{f.snippet}"
-                    </div>
+                      {offendingText ? (
+                        <div className="p-2 rounded bg-rose-50/80 border border-rose-200 text-rose-950 font-mono text-[11px]">
+                          <span className="text-rose-500 font-bold mr-1">✕</span>
+                          "{offendingText}"
+                        </div>
+                      ) : (
+                        <div className="p-2 rounded bg-slate-50 border border-slate-200 text-slate-500 italic text-[11px]">
+                          Offending excerpt not explicitly isolated
+                        </div>
+                      )}
 
-                    <p className="text-slate-600 text-[11px] leading-snug">{f.explanation}</p>
+                      {f.explanation && (
+                        <p className="text-slate-600 text-[11px] leading-snug">{f.explanation}</p>
+                      )}
 
-                    <div className="p-2 rounded bg-blue-50/70 border border-blue-200 text-blue-950 text-[11px] flex items-start gap-1.5">
-                      <CornerDownRight className="w-3.5 h-3.5 text-blue-600 mt-0.5 shrink-0" />
-                      <span>{f.suggestion}</span>
+                      {suggestedAlternative ? (
+                        <div className="p-2 rounded bg-blue-50/70 border border-blue-200 text-blue-950 text-[11px] flex items-start gap-1.5">
+                          <CornerDownRight className="w-3.5 h-3.5 text-blue-600 mt-0.5 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[10px] font-semibold text-blue-900 block mb-0.5 uppercase tracking-wide">
+                              Suggested Correction
+                            </span>
+                            <span className="font-sans whitespace-pre-wrap">{suggestedAlternative}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-2 rounded bg-slate-50 border border-slate-200 text-slate-500 text-[11px] italic">
+                          No automated replacement suggested. Review guideline reference for manual revision.
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))
+                  )
+                })
               )}
             </div>
           )}

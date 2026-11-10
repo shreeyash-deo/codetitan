@@ -25,6 +25,11 @@ class ContentReview(Base):
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="in_review", nullable=False, index=True)
     compliance_score: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    audit_status: Mapped[str] = mapped_column(String(50), default="verified", nullable=False)
+    audited_content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    audited_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    findings_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rule_set_version: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     submitted_by: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True

@@ -132,7 +132,40 @@ export const ContentReviewPage: React.FC = () => {
     }
   }
 
-  // Run Brand Review
+  const mapBackendFindings = (rawFindings: any[]): StudioFinding[] => {
+    return (rawFindings || []).map((f) => {
+      const origText = f.originalText || f.excerpt || f.snippet || ''
+      const explanation = f.explanation || ''
+      const guidelineRef = f.guideline_reference || f.supportingGuidelineTitle || ''
+      const code = f.supportingGuidelineCode || (guidelineRef.includes(':') ? guidelineRef.split(':')[0].trim() : 'RULE')
+      const title = f.supportingGuidelineTitle || (guidelineRef.includes(':') ? guidelineRef.split(':', 2)[1].trim() : guidelineRef) || explanation
+      const correction = f.suggestedCorrection || f.suggested_correction || f.suggestion || ''
+      const conf = f.confidence !== undefined ? (f.confidence <= 1.0 ? Math.round(f.confidence * 100) : Math.round(f.confidence)) : 90
+      const isResolved = f.resolved || f.status === 'accepted' || f.status === 'applied'
+
+      return {
+        id: String(f.id),
+        category: (f.category as StudioCategory) || 'Unsupported claims',
+        severity: f.severity === 'critical' ? 'critical' : (f.severity === 'major' || f.severity === 'moderate' ? 'warning' : 'info'),
+        originalText: origText,
+        explanation,
+        supportingGuideline: {
+          id: `g-${f.id}`,
+          code,
+          category: f.category,
+          title,
+          description: explanation,
+          rationale: explanation,
+          enforcementLevel: f.severity === 'critical' ? 'Strict' : 'Advisory',
+        },
+        suggestedCorrection: correction,
+        confidence: conf,
+        status: isResolved ? 'accepted' : (f.status === 'rejected' ? 'rejected' : 'pending'),
+      }
+    })
+  }
+
+  // Run Brand Review / Recheck
   const handleRunReview = async () => {
     if (!content.trim()) return
     // Preserve immutable original submission on first run; do not overwrite on recheck
@@ -147,6 +180,30 @@ export const ContentReviewPage: React.FC = () => {
 
     setIsSubmitting(true)
     try {
+      if (activeReviewId) {
+        // If content was modified, update review and re-audit via PATCH
+        const res: any = await apiClient.patch(`/api/v1/reviews/${activeReviewId}`, {
+          title: title.trim() || 'Marketing Asset',
+          content: content.trim(),
+        })
+        const data = res.data
+        setRealBackendScore(data.compliance_score)
+        setRealSummary(data.summary)
+        setLastAuditedContent(data.content)
+
+        if (data.audit_status === 'rules_unavailable') {
+          setFindings([])
+          setStudioState('results')
+          warning(data.summary || 'Brand rules unavailable in this organisation.', 'Incomplete Audit')
+          return
+        }
+
+        setFindings(mapBackendFindings(data.findings || []))
+        setStudioState('results')
+        success(`Recheck completed. Verified compliance score: ${data.compliance_score}/100.`, 'Analysis Verified')
+        return
+      }
+
       const channel = contentType === 'Blog' ? 'Blog' : (contentType === 'Advertisement' ? 'Ad Creative' : 'Social')
       const result = await reviewService.submitContentForReview({
         title: title.trim() || 'Marketing Asset',
@@ -172,27 +229,7 @@ export const ContentReviewPage: React.FC = () => {
         return
       }
 
-      const mappedFindings: StudioFinding[] = (result.findings || []).map((f) => ({
-        id: f.id,
-        category: (f.category as StudioCategory) || 'Unsupported claims',
-        severity: f.severity === 'critical' ? 'critical' : (f.severity === 'moderate' ? 'warning' : 'info'),
-        originalText: f.originalText,
-        explanation: f.explanation,
-        supportingGuideline: {
-          id: `g-${f.id}`,
-          code: f.supportingGuidelineCode || 'RULE',
-          category: f.category,
-          title: f.supportingGuidelineTitle || f.explanation,
-          description: f.explanation,
-          rationale: f.explanation,
-          enforcementLevel: f.severity === 'critical' ? 'Strict' : 'Advisory',
-        },
-        suggestedCorrection: f.suggestedCorrection || '',
-        confidence: f.confidence,
-        status: f.resolved ? 'accepted' : 'pending',
-      }))
-
-      setFindings(mappedFindings)
+      setFindings(mapBackendFindings(result.findings || []))
       setStudioState('results')
       success(`Compliance analysis completed. Compliance score: ${result.overallScore}/100.`, 'Analysis Complete')
     } catch (err: any) {
@@ -210,9 +247,30 @@ export const ContentReviewPage: React.FC = () => {
   }
 
   // Finding correction actions
-  const handleAcceptSuggestion = (findingId: string) => {
+  const handleAcceptSuggestion = async (findingId: string) => {
     const target = findings.find(f => f.id === findingId)
     if (!target) return
+
+    if (!apiClient.isMockMode() && activeReviewId) {
+      try {
+        const res: any = await apiClient.post(`/api/v1/reviews/${activeReviewId}/findings/${findingId}/apply`)
+        const data = res.data
+        setContent(data.updated_content)
+        setRealBackendScore(data.compliance_score)
+        setLastAuditedContent(data.updated_content)
+        if (data.findings) {
+          setFindings(mapBackendFindings(data.findings))
+        }
+        success(`Correction applied for "${target.category}". Verified score: ${data.compliance_score}/100.`, 'Correction Applied')
+        return
+      } catch (err: any) {
+        toastError(
+          err?.response?.data?.detail || err?.detail || err?.message || 'Failed to apply correction on server',
+          'Replacement Failed'
+        )
+        return
+      }
+    }
 
     const replacement = target.manualReplacement || target.suggestedCorrection || ''
     const orig = target.originalText
@@ -221,14 +279,12 @@ export const ContentReviewPage: React.FC = () => {
     let failureDetail = ''
 
     setContent(prev => {
-      // 1. Missing disclaimer handling
       if (orig === '[Missing Regulatory Disclaimer]' || replacement.startsWith('\n\nDisclaimer:')) {
         const toAppend = replacement.startsWith('\n\n') ? replacement : '\n\n' + replacement
         const cleanDisc = replacement.replace('\n\nDisclaimer:', '').trim().toLowerCase()
         const cleanPrev = prev.toLowerCase()
 
         if (cleanPrev.includes('disclaimer:') || (cleanDisc && cleanPrev.includes(cleanDisc))) {
-          // Disclaimer already present; treat as successfully satisfied without duplication
           wasModified = true
           return prev
         }
@@ -236,13 +292,11 @@ export const ContentReviewPage: React.FC = () => {
         return prev.trimEnd() + toAppend
       }
 
-      // 2. Exact match replacement
       if (orig && prev.includes(orig)) {
         wasModified = true
         return prev.replace(orig, replacement)
       }
 
-      // 3. Case-insensitive / whitespace-tolerant regex replacement
       if (orig) {
         const escaped = orig.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         const regex = new RegExp(escaped, 'i')
@@ -272,9 +326,33 @@ export const ContentReviewPage: React.FC = () => {
   }
 
   // Batch Accept All Suggestions cleanly without toast loops or state corruption
-  const handleAcceptAllSuggestions = () => {
+  const handleAcceptAllSuggestions = async () => {
     const pendingToApply = findings.filter(f => f.status === 'pending')
     if (pendingToApply.length === 0) return
+
+    if (!apiClient.isMockMode() && activeReviewId) {
+      setIsSubmitting(true)
+      try {
+        const res: any = await apiClient.post(`/api/v1/reviews/${activeReviewId}/findings/batch-apply`)
+        const data = res.data
+        setContent(data.content)
+        setRealBackendScore(data.compliance_score)
+        setLastAuditedContent(data.content)
+        if (data.findings) {
+          setFindings(mapBackendFindings(data.findings))
+        }
+        success(`All suggestions applied and verified. New compliance score: ${data.compliance_score}/100.`, 'Batch Applied & Verified')
+        return
+      } catch (err: any) {
+        toastError(
+          err?.response?.data?.detail || err?.detail || err?.message || 'Batch correction failed on server',
+          'Application Failed'
+        )
+        return
+      } finally {
+        setIsSubmitting(false)
+      }
+    }
 
     let appliedCount = 0
     let failedCount = 0
@@ -419,8 +497,29 @@ export const ContentReviewPage: React.FC = () => {
   })
 
   // Final actions
-  const handleSaveReview = () => {
-    success(`Review for "${title}" saved to local governance records.`, 'Review Saved')
+  const handleSaveReview = async () => {
+    if (!apiClient.isMockMode() && activeReviewId) {
+      setIsSubmitting(true)
+      try {
+        const res: any = await apiClient.patch(`/api/v1/reviews/${activeReviewId}`, {
+          title: title.trim() || 'Marketing Asset',
+          content: content.trim(),
+        })
+        const data = res.data
+        setRealBackendScore(data.compliance_score)
+        setLastAuditedContent(data.content)
+        if (data.findings) {
+          setFindings(mapBackendFindings(data.findings))
+        }
+        success(`Review for "${title}" saved and verified by compliance engine. Score: ${data.compliance_score}/100.`, 'Review Saved & Verified')
+      } catch (err: any) {
+        toastError(err?.response?.data?.detail || err?.detail || err?.message || 'Failed to save review', 'Save Failed')
+      } finally {
+        setIsSubmitting(false)
+      }
+    } else {
+      success(`Review for "${title}" saved to local governance records.`, 'Review Saved')
+    }
   }
 
   const handleSubmitForApproval = async () => {
@@ -428,6 +527,14 @@ export const ContentReviewPage: React.FC = () => {
       warning(
         `Cannot submit for approval with ${criticalCount} unresolved critical violations. Please accept suggestions or edit manually first.`,
         'Approval Blocked'
+      )
+      return
+    }
+
+    if (isDraftModified) {
+      warning(
+        'Working draft has unverified modifications. Please click "Recheck Content" or "Save Review" to re-verify compliance before requesting approval.',
+        'Recheck Required'
       )
       return
     }
@@ -448,10 +555,12 @@ export const ContentReviewPage: React.FC = () => {
           }, currentWorkspace?.id)
           reviewIdToSubmit = result.id
           setActiveReviewId(result.id)
-        } else if (content !== originalContent) {
-          await apiClient.patch(`/api/v1/reviews/${reviewIdToSubmit}`, {
+        } else if (content !== lastAuditedContent) {
+          const saveRes: any = await apiClient.patch(`/api/v1/reviews/${reviewIdToSubmit}`, {
             content: content,
           })
+          setLastAuditedContent(saveRes.data.content)
+          setRealBackendScore(saveRes.data.compliance_score)
         }
 
         if (reviewIdToSubmit) {
@@ -460,7 +569,9 @@ export const ContentReviewPage: React.FC = () => {
           })
         }
       } catch (err: any) {
-        toastError(err?.detail || err?.message || 'Approval request failed', 'Submission Notice')
+        const errorDetail = err?.response?.data?.detail || err?.detail || err?.message || 'Approval request failed'
+        toastError(errorDetail, 'Submission Notice')
+        return
       }
     }
 

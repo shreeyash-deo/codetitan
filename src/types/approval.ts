@@ -1,4 +1,5 @@
 import type { ComplianceStatus, DetectedIssue } from './review'
+import type { ComplianceFinding } from './api'
 
 export type ApprovalFilter =
   | 'all'
@@ -50,12 +51,15 @@ export interface HistoricalReviewRecord {
     email: string
   }
   score: number // 0-100
+  auditStatus?: 'verified' | 'pending' | 'stale' | 'failed' | 'rules_unavailable' | string
+  auditedAt?: string
+  auditedContentHash?: string
   violationsCount: number
   reviewDate: string
   approvalStatus: 'approved' | 'pending' | 'needs_revision' | 'critical_issues'
   originalContent: string
   correctedContent: string
-  findings: DetectedIssue[]
+  findings: (DetectedIssue | ComplianceFinding | any)[]
   acceptedSuggestionsCount: number
   rejectedSuggestionsCount: number
   comments: ReviewerComment[]

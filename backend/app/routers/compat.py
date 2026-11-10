@@ -782,6 +782,9 @@ def scan_content(
         "contentType": review.content_type,
         "channel": channel,
         "overallScore": review.compliance_score,
+        "auditStatus": getattr(review, "audit_status", "verified"),
+        "auditedContentHash": getattr(review, "audited_content_hash", None),
+        "auditedAt": review.audited_at.isoformat() if getattr(review, "audited_at", None) else None,
         "issuesCount": len(frontend_findings),
         "status": "flagged" if review.compliance_score < 80 else "approved",
         "hasApprovedRules": True,
@@ -835,6 +838,7 @@ def get_pending_approvals(
                         "email": rev_user.email if rev_user else "reviewer@brandshield.local",
                     },
                     "score": rev.compliance_score,
+                    "auditStatus": getattr(rev, "audit_status", "verified"),
                     "status": "pending",
                     "reviewDate": rev.created_at.strftime("%b %d"),
                     "contentExcerpt": rev.content[:140] + "...",
@@ -1064,15 +1068,19 @@ def add_review_comment(
 def _map_review_to_historical_record(r: ContentReview, current_user: User) -> Dict[str, Any]:
     findings = []
     for f in (r.findings or []):
+        excerpt_text = f.excerpt or ""
+        suggested_text = f.suggested_correction or ""
         findings.append({
             "id": str(f.id),
             "category": f.category,
             "severity": f.severity,
-            "originalText": f.excerpt,
+            "originalText": excerpt_text,
+            "snippet": excerpt_text,
             "explanation": f.explanation,
             "supportingGuidelineCode": f.guideline_reference.split(":")[0] if ":" in f.guideline_reference else "RULE",
             "supportingGuidelineTitle": f.guideline_reference,
-            "suggestedCorrection": f.suggested_correction or "",
+            "suggestedCorrection": suggested_text,
+            "suggestion": suggested_text,
             "confidence": int(f.confidence * 100) if f.confidence <= 1.0 else int(f.confidence),
         })
 
@@ -1194,8 +1202,14 @@ def _map_review_to_historical_record(r: ContentReview, current_user: User) -> Di
         seen_stages.add(stage_key)
 
         act_user = getattr(act, "user", None)
-        actor_name = act_user.name if act_user else "System"
-        actor_role = getattr(act_user, "role", "Governance") if act_user else "Governance"
+        is_auto = is_automated_submission_summary(act.details) or (act.user_id is None)
+
+        if is_auto:
+            actor_name = "BrandShield Sentinel"
+            actor_role = "Automated System"
+        else:
+            actor_name = act_user.name if act_user else "System"
+            actor_role = getattr(act_user, "role", "Governance") if act_user else "Governance"
 
         timeline.append({
             "id": f"tl-act-{act.id}",
@@ -1245,6 +1259,9 @@ def _map_review_to_historical_record(r: ContentReview, current_user: User) -> Di
         "submittedBy": submitted_by,
         "assignedReviewer": assigned_reviewer,
         "score": r.compliance_score,
+        "auditStatus": getattr(r, "audit_status", "verified"),
+        "auditedContentHash": getattr(r, "audited_content_hash", None),
+        "auditedAt": r.audited_at.isoformat() if getattr(r, "audited_at", None) else None,
         "violationsCount": len(findings),
         "reviewDate": r.created_at.strftime("%b %d, %Y"),
         "approvalStatus": approval_status,

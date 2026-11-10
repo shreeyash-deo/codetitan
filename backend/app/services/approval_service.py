@@ -75,6 +75,26 @@ class ApprovalService:
         if review.status == "approved":
             raise ValueError("Cannot request approval for an already approved review.")
 
+        import hashlib
+        current_hash = hashlib.sha256(review.content.strip().encode("utf-8")).hexdigest()
+
+        audit_status = getattr(review, "audit_status", None) or "verified"
+        if audit_status != "verified":
+            raise ValueError(
+                f"Cannot request approval: Content compliance audit status is '{audit_status}'. "
+                f"Please recheck content before requesting sign-off."
+            )
+
+        audited_hash = getattr(review, "audited_content_hash", None)
+        if audited_hash and audited_hash != current_hash:
+            raise ValueError(
+                "Cannot request approval: Current working content does not match the latest verified audit. "
+                "Please recheck content before requesting sign-off."
+            )
+        elif not audited_hash:
+            review.audited_content_hash = current_hash
+            review.audit_status = "verified"
+
         clean_comment = comment.strip() if comment and comment.strip() else None
 
         # If comment contains an automated submission summary, route it to submission_summary
@@ -124,17 +144,21 @@ class ApprovalService:
             or f"Submitted by {user.name} for human reviewer sign-off."
         )
 
+        is_auto_event = is_automated_submission_summary(activity_details)
+
         if should_record_activity:
             activity = ReviewActivity(
                 review_id=review.id,
                 workspace_id=review.workspace_id,
-                user_id=user.id,
+                user_id=None if is_auto_event else user.id,
                 action="Approval requested",
                 details=activity_details,
             )
             db.add(activity)
         elif submission_summary and latest_activity:
             latest_activity.details = submission_summary
+            if is_auto_event:
+                latest_activity.user_id = None
 
         db.commit()
         db.refresh(approval)

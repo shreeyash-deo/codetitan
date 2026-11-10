@@ -151,7 +151,8 @@ def test_02_submission_creates_appropriate_system_activity_event(client, db):
     assert "Approval requested" in timeline_stages
 
     approval_event = next(t for t in detail["timeline"] if t["stage"] == "Approval requested")
-    assert approval_event["actorName"] == env["employee"].name
+    assert approval_event["actorName"] == "BrandShield Sentinel"
+    assert approval_event["actorRole"] == "Automated System"
     assert approval_event["note"] == summary_text
 
     # Comments must NOT have this summary

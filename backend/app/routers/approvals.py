@@ -71,7 +71,10 @@ def request_review_approval(
         )
         return approval
     except ValueError as val_err:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(val_err))
+        err_msg = str(val_err)
+        if "not found" in err_msg.lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=err_msg)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_msg)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 
@@ -101,7 +104,10 @@ def request_rule_approval(
         )
         return approval
     except ValueError as val_err:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(val_err))
+        err_msg = str(val_err)
+        if "not found" in err_msg.lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=err_msg)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_msg)
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 

@@ -9,12 +9,35 @@ from app.models import *  # Import all models to ensure metadata is populated
 from app.routers import auth, workspaces, guidelines, rules, reviews, approvals, dashboard, health, compat
 
 
+def ensure_schema_upgrades():
+    try:
+        from sqlalchemy import inspect, text
+        with engine.connect() as conn:
+            inspector = inspect(conn)
+            if "content_reviews" in inspector.get_table_names():
+                columns = [c["name"] for c in inspector.get_columns("content_reviews")]
+                if "audit_status" not in columns:
+                    conn.execute(text("ALTER TABLE content_reviews ADD COLUMN audit_status VARCHAR(50) DEFAULT 'verified' NOT NULL"))
+                if "audited_content_hash" not in columns:
+                    conn.execute(text("ALTER TABLE content_reviews ADD COLUMN audited_content_hash VARCHAR(64)"))
+                if "audited_at" not in columns:
+                    conn.execute(text("ALTER TABLE content_reviews ADD COLUMN audited_at DATETIME"))
+                if "findings_count" not in columns:
+                    conn.execute(text("ALTER TABLE content_reviews ADD COLUMN findings_count INTEGER DEFAULT 0 NOT NULL"))
+                if "rule_set_version" not in columns:
+                    conn.execute(text("ALTER TABLE content_reviews ADD COLUMN rule_set_version VARCHAR(100)"))
+                conn.commit()
+    except Exception as exc:
+        print(f"Schema upgrade notice: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure uploads directory exists
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     # Automatically create tables if using SQLite or initial bootstrap
     Base.metadata.create_all(bind=engine)
+    ensure_schema_upgrades()
     yield
 
 

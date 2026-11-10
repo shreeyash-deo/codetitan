@@ -283,17 +283,24 @@ export const ReviewHistoryPage: React.FC = () => {
 
                       {/* Compliance Score */}
                       <td className="px-4 py-3.5 whitespace-nowrap">
-                        <span
-                          className={`font-bold ${
-                            rev.score >= 90
-                              ? 'text-emerald-700'
-                              : rev.score >= 75
-                              ? 'text-blue-700'
-                              : 'text-amber-700'
-                          }`}
-                        >
-                          {rev.score}%
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`font-bold ${
+                              rev.score >= 90
+                                ? 'text-emerald-700'
+                                : rev.score >= 75
+                                ? 'text-blue-700'
+                                : 'text-amber-700'
+                            }`}
+                          >
+                            {rev.score}%
+                          </span>
+                          {rev.auditStatus && rev.auditStatus !== 'verified' && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                              {rev.auditStatus}
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Violations Count */}

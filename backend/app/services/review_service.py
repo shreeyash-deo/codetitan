@@ -1,5 +1,6 @@
 import math
-from datetime import datetime
+import hashlib
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -14,6 +15,7 @@ from app.schemas.review import (
     PaginatedReviewsOut,
     ApplyCorrectionResponse,
 )
+from app.schemas.finding import FindingOut
 from app.services.compliance.compliance_engine import compliance_engine, NoApprovedRulesError
 from app.services.compliance.scoring_service import scoring_service
 
@@ -60,6 +62,9 @@ class ReviewService:
             approved_rules=approved_rules,
         )
 
+        # Compute SHA-256 hash of submitted content
+        content_hash = hashlib.sha256(submission.content.strip().encode("utf-8")).hexdigest()
+
         # Persist ContentReview
         review = ContentReview(
             workspace_id=workspace_id,
@@ -69,6 +74,11 @@ class ReviewService:
             content_type=submission.content_type,
             status=audit_result.status,
             compliance_score=audit_result.compliance_score,
+            audit_status="verified",
+            audited_content_hash=content_hash,
+            audited_at=datetime.now(timezone.utc),
+            findings_count=len(audit_result.findings),
+            rule_set_version=f"rules_count:{len(approved_rules)}",
             summary=audit_result.summary,
             submitted_by=user_id,
         )
@@ -214,6 +224,95 @@ class ReviewService:
         return finding, review
 
     @staticmethod
+    def recheck_and_audit(
+        db: Session,
+        review_id: int,
+        new_content: Optional[str] = None,
+        user_id: Optional[int] = None,
+    ) -> ContentReview:
+        review = db.query(ContentReview).filter(ContentReview.id == review_id).first()
+        if not review:
+            raise ValueError("Review not found.")
+
+        content_to_audit = (new_content if new_content is not None else review.content).strip()
+        if not content_to_audit:
+            raise ValueError("Content cannot be empty.")
+
+        # Update working content (never touching immutable original_content)
+        review.content = new_content if new_content is not None else review.content
+
+        # Fetch approved brand rules for workspace
+        approved_rules = (
+            db.query(BrandRule)
+            .filter(
+                BrandRule.workspace_id == review.workspace_id,
+                BrandRule.approval_status == "approved",
+            )
+            .all()
+        )
+
+        if not approved_rules:
+            review.audit_status = "rules_unavailable"
+            review.compliance_score = 0
+            review.summary = "No approved brand rules found. Brand-specific compliance analysis cannot be completed."
+            db.commit()
+            db.refresh(review)
+            return review
+
+        try:
+            audit_result = compliance_engine.run_compliance_audit(
+                content=content_to_audit,
+                content_type=review.content_type,
+                approved_rules=approved_rules,
+            )
+        except Exception as exc:
+            review.audit_status = "failed"
+            review.summary = f"Compliance audit failed: {exc}"
+            db.commit()
+            db.refresh(review)
+            raise
+
+        content_hash = hashlib.sha256(content_to_audit.encode("utf-8")).hexdigest()
+
+        # Update review properties atomically
+        review.compliance_score = audit_result.compliance_score
+        review.status = audit_result.status
+        review.audit_status = "verified"
+        review.audited_content_hash = content_hash
+        review.audited_at = datetime.now(timezone.utc)
+        review.summary = audit_result.summary
+        review.rule_set_version = f"rules_count:{len(approved_rules)}"
+        review.findings_count = len(audit_result.findings)
+
+        # Replace findings atomically
+        db.query(Finding).filter(Finding.review_id == review.id).delete()
+        for f in audit_result.findings:
+            new_f = Finding(
+                review_id=review.id,
+                severity=f.severity,
+                category=f.category,
+                excerpt=f.excerpt,
+                explanation=f.explanation,
+                guideline_reference=f.guideline_reference,
+                suggested_correction=f.suggested_correction,
+                confidence=f.confidence,
+                status="open",
+            )
+            db.add(new_f)
+
+        activity = ReviewActivity(
+            review_id=review.id,
+            user_id=user_id,
+            action="Audit Completed",
+            details=f"Compliance audit re-verified. Score: {review.compliance_score}/100. Violations: {len(audit_result.findings)}.",
+        )
+        db.add(activity)
+
+        db.commit()
+        db.refresh(review)
+        return review
+
+    @staticmethod
     def apply_correction(
         db: Session, review_id: int, finding_id: int, user_id: Optional[int]
     ) -> ApplyCorrectionResponse:
@@ -254,9 +353,9 @@ class ReviewService:
             # Case-insensitive replacement fallback
             import re
             pattern = re.compile(re.escape(original_excerpt), re.IGNORECASE)
-            new_content, count = pattern.subn(replacement, review.content, count=1)
+            new_c, count = pattern.subn(replacement, review.content, count=1)
             if count > 0:
-                review.content = new_content
+                review.content = new_c
                 modified = True
 
         if not modified:
@@ -271,6 +370,10 @@ class ReviewService:
         new_score, new_status = scoring_service.calculate_score(all_findings)
         review.compliance_score = new_score
         review.status = new_status
+        review.audit_status = "verified"
+        review.audited_content_hash = hashlib.sha256(review.content.strip().encode("utf-8")).hexdigest()
+        review.audited_at = datetime.now(timezone.utc)
+        review.findings_count = len([f for f in all_findings if f.status == "open"])
 
         activity = ReviewActivity(
             review_id=review_id,
@@ -291,7 +394,83 @@ class ReviewService:
             original_content=review.original_content,
             compliance_score=review.compliance_score,
             review_status=review.status,
+            audit_status=review.audit_status,
+            audited_content_hash=review.audited_content_hash,
+            audited_at=review.audited_at,
+            findings=[FindingOut.model_validate(f) for f in all_findings],
         )
+
+    @staticmethod
+    def batch_apply_corrections(
+        db: Session, review_id: int, user_id: Optional[int]
+    ) -> ContentReview:
+        review = db.query(ContentReview).filter(ContentReview.id == review_id).first()
+        if not review:
+            raise ValueError("Review not found.")
+
+        findings = (
+            db.query(Finding)
+            .filter(Finding.review_id == review_id, Finding.status == "open")
+            .all()
+        )
+        if not findings:
+            return review
+
+        updated_content = review.content
+        disclaimer_to_append = ""
+        applied_count = 0
+
+        for f in findings:
+            if not f.suggested_correction:
+                continue
+            orig = f.excerpt
+            repl = f.suggested_correction
+
+            if orig == "[Missing Regulatory Disclaimer]" or "disclaimer" in f.category.lower():
+                to_append = repl if repl.startswith("\n\n") else f"\n\n{repl}"
+                clean_disc = " ".join(repl.replace("\n", " ").split()).lower()
+                clean_content = " ".join(updated_content.split()).lower()
+                if clean_disc not in clean_content and "disclaimer:" not in clean_content:
+                    disclaimer_to_append = to_append
+                f.status = "applied"
+                applied_count += 1
+            elif orig in updated_content:
+                updated_content = updated_content.replace(orig, repl, 1)
+                f.status = "applied"
+                applied_count += 1
+            else:
+                import re
+                pattern = re.compile(re.escape(orig), re.IGNORECASE)
+                new_c, count = pattern.subn(repl, updated_content, count=1)
+                if count > 0:
+                    updated_content = new_c
+                    f.status = "applied"
+                    applied_count += 1
+
+        if disclaimer_to_append:
+            updated_content = updated_content.rstrip() + disclaimer_to_append
+
+        review.content = updated_content
+
+        all_findings = db.query(Finding).filter(Finding.review_id == review_id).all()
+        new_score, new_status = scoring_service.calculate_score(all_findings)
+        review.compliance_score = new_score
+        review.status = new_status
+        review.audit_status = "verified"
+        review.audited_content_hash = hashlib.sha256(review.content.strip().encode("utf-8")).hexdigest()
+        review.audited_at = datetime.now(timezone.utc)
+        review.findings_count = len([f for f in all_findings if f.status == "open"])
+
+        activity = ReviewActivity(
+            review_id=review_id,
+            user_id=user_id,
+            action="Batch Corrections Applied",
+            details=f"Applied {applied_count} correction(s) to working draft. Recalculated score: {new_score}/100.",
+        )
+        db.add(activity)
+        db.commit()
+        db.refresh(review)
+        return review
 
 
 review_service = ReviewService()

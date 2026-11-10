@@ -16,9 +16,20 @@ interface ApprovalTimelineWidgetProps {
   className?: string
 }
 
-const isSystemActor = (role?: string) => {
-  const r = (role || '').toLowerCase()
-  return r.includes('sentinel') || r.includes('system') || r.includes('automated') || r.includes('governance')
+const isSystemEvent = (event: TimelineEvent) => {
+  const role = (event.actorRole || '').toLowerCase()
+  if (role.includes('sentinel') || role.includes('system') || role.includes('automated') || role.includes('governance')) {
+    return true
+  }
+  const name = (event.actorName || '').toLowerCase()
+  if (name.includes('sentinel') || name.includes('system') || name.includes('ai')) {
+    return true
+  }
+  const note = (event.note || '').toLowerCase()
+  if (note.includes('submitted for sign-off with') || note.includes('submission summary:') || note.includes('compliance scan completed')) {
+    return true
+  }
+  return false
 }
 
 export const ApprovalTimelineWidget: React.FC<ApprovalTimelineWidgetProps> = ({
@@ -68,7 +79,7 @@ export const ApprovalTimelineWidget: React.FC<ApprovalTimelineWidgetProps> = ({
                     >
                       {event.stage}
                     </span>
-                    {isSystemActor(event.actorRole) ? (
+                    {isSystemEvent(event) ? (
                       <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
                         System Event
                       </span>

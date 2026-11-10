@@ -49,6 +49,11 @@ class ContentReviewOut(ContentReviewBase):
     original_content: str
     status: str
     compliance_score: int
+    audit_status: str = "verified"
+    audited_content_hash: Optional[str] = None
+    audited_at: Optional[datetime] = None
+    findings_count: int = 0
+    rule_set_version: Optional[str] = None
     summary: Optional[str] = None
     submitted_by: Optional[int] = None
     created_at: datetime
@@ -77,3 +82,7 @@ class ApplyCorrectionResponse(BaseModel):
     original_content: str
     compliance_score: int
     review_status: str
+    audit_status: str = "verified"
+    audited_content_hash: Optional[str] = None
+    audited_at: Optional[datetime] = None
+    findings: Optional[List[FindingOut]] = None

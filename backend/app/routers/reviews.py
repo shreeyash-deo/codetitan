@@ -182,14 +182,62 @@ def update_review(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update title, working content, or review status."""
+    """Update title, working content, or review status. If content changed, re-audits atomically."""
     review = get_review_with_access(review_id, db, current_user)
     update_data = review_in.model_dump(exclude_unset=True)
+
+    content_changed = "content" in update_data and update_data["content"] != review.content
+    new_content = update_data.pop("content", None)
+
     for field, value in update_data.items():
         setattr(review, field, value)
-    db.commit()
-    db.refresh(review)
+
+    if content_changed and new_content is not None:
+        review = review_service.recheck_and_audit(
+            db=db,
+            review_id=review.id,
+            new_content=new_content,
+            user_id=current_user.id,
+        )
+    else:
+        db.commit()
+        db.refresh(review)
+
     return review
+
+
+@router.post(
+    "/reviews/{review_id}/findings/batch-apply",
+    response_model=ContentReviewOut,
+    summary="Batch apply all pending suggestions and re-audit working document",
+)
+def batch_apply_findings(
+    review_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    get_review_with_access(review_id, db, current_user)
+    try:
+        return review_service.batch_apply_corrections(db, review_id, current_user.id)
+    except ValueError as val_err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err))
+
+
+@router.post(
+    "/reviews/{review_id}/recheck",
+    response_model=ContentReviewOut,
+    summary="Re-audit working content of review against approved brand rules",
+)
+def recheck_review(
+    review_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    get_review_with_access(review_id, db, current_user)
+    try:
+        return review_service.recheck_and_audit(db, review_id, user_id=current_user.id)
+    except ValueError as val_err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err))
 
 
 @router.delete(

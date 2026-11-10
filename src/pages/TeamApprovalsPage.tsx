@@ -395,17 +395,24 @@ export const TeamApprovalsPage: React.FC = () => {
                     {/* Score Pill */}
                     <div className="flex sm:flex-col items-center sm:items-end justify-between shrink-0">
                       <div className="text-left sm:text-right">
-                        <span
-                          className={`text-xl font-bold ${
-                            item.score >= 90
-                              ? 'text-emerald-700'
-                              : item.score >= 75
-                              ? 'text-blue-700'
-                              : 'text-amber-700'
-                          }`}
-                        >
-                          {item.score}%
-                        </span>
+                        <div className="flex items-center gap-1.5 justify-end">
+                          <span
+                            className={`text-xl font-bold ${
+                              item.score >= 90
+                                ? 'text-emerald-700'
+                                : item.score >= 75
+                                ? 'text-blue-700'
+                                : 'text-amber-700'
+                            }`}
+                          >
+                            {item.score}%
+                          </span>
+                          {(item as any).auditStatus && (item as any).auditStatus !== 'verified' && (
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                              {(item as any).auditStatus}
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[10px] text-slate-400 block">Compliance</span>
                       </div>
                     </div>
