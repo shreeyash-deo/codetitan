@@ -348,7 +348,16 @@ def get_guidelines_candidates(
     current_user: User = Depends(get_current_user),
 ):
     ws_id = get_target_workspace_id(db, current_user, brand_id)
-    verify_workspace_admin_in_compat(db, ws_id, current_user.id)
+    member = workspace_service.get_member(db, ws_id, current_user.id)
+    if not member or member.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You are not a member of this workspace",
+        )
+    # Non-admin members do not manage candidate approvals; return empty candidates list cleanly
+    if member.role.lower() not in ("admin", "owner"):
+        return []
+
     candidates = rule_service.list_rules(db=db, workspace_id=ws_id, approval_status="pending")
     docs = db.query(GuidelineDocument).filter(GuidelineDocument.workspace_id == ws_id).all()
     doc_map = {d.id: d for d in docs}

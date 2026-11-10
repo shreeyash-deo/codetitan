@@ -109,30 +109,40 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setIsLoading(true)
     setError(null)
     try {
-      const brandId = currentWorkspace.id
+      const brandId = String(currentWorkspace.id)
+      const isAdmin = (currentWorkspace.role || user?.role || '').toLowerCase() === 'admin'
 
-      const [rulesData, candidatesData, docsData, historyData, telemetryData] = await Promise.all([
+      const [rulesRes, candidatesRes, docsRes, historyRes, telemetryRes] = await Promise.allSettled([
         guidelineService.getApprovedRules(brandId),
-        guidelineService.getPendingCandidates(brandId),
+        isAdmin ? guidelineService.getPendingCandidates(brandId) : Promise.resolve([]),
         guidelineService.getSourceDocuments(brandId),
         historyService.getReviewHistory({ brandId }),
-        brandService.getBrandTelemetry(brandId).catch(() => null),
+        brandService.getBrandTelemetry(brandId),
       ])
 
-      if (rulesData) {
-        setApprovedRules(rulesData as unknown as ApprovedRule[])
+      if (rulesRes.status === 'fulfilled' && rulesRes.value) {
+        setApprovedRules(rulesRes.value as unknown as ApprovedRule[])
+      } else if (rulesRes.status === 'rejected') {
+        const errMsg = rulesRes.reason?.response?.data?.detail || rulesRes.reason?.detail || rulesRes.reason?.message || 'Failed to load brand rules'
+        setError(errMsg)
       }
-      if (candidatesData) {
-        setPendingCandidates(candidatesData as unknown as PendingCandidateRule[])
+
+      if (candidatesRes.status === 'fulfilled' && candidatesRes.value) {
+        setPendingCandidates(candidatesRes.value as unknown as PendingCandidateRule[])
+      } else {
+        setPendingCandidates([])
       }
-      if (docsData) {
-        setSourceDocuments(docsData as unknown as SourceDocument[])
+
+      if (docsRes.status === 'fulfilled' && docsRes.value) {
+        setSourceDocuments(docsRes.value as unknown as SourceDocument[])
       }
-      if (historyData) {
-        setReviews(historyData as unknown as HistoricalReviewRecord[])
+
+      if (historyRes.status === 'fulfilled' && historyRes.value) {
+        setReviews(historyRes.value as unknown as HistoricalReviewRecord[])
       }
-      if (telemetryData) {
-        setTelemetry(telemetryData)
+
+      if (telemetryRes.status === 'fulfilled' && telemetryRes.value) {
+        setTelemetry(telemetryRes.value)
       }
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.detail || err?.message || 'Failed to fetch live governance data from backend'
@@ -140,7 +150,7 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     } finally {
       setIsLoading(false)
     }
-  }, [currentWorkspace?.id])
+  }, [currentWorkspace?.id, currentWorkspace?.role, user?.role])
 
   // Fetch initial data from services
   useEffect(() => {
