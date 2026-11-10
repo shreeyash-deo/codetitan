@@ -22,7 +22,7 @@ from app.models.activity import ReviewActivity
 from app.services.workspace_service import workspace_service
 from app.services.rule_service import rule_service
 from app.services.review_service import review_service
-from app.services.approval_service import approval_service
+from app.services.approval_service import approval_service, is_automated_submission_summary
 from app.services.dashboard_service import dashboard_service
 from app.services.compliance.compliance_engine import compliance_engine, NoApprovedRulesError
 from app.schemas.review import ContentReviewSubmission
@@ -675,6 +675,12 @@ def get_pending_approvals(
             if rev:
                 sub_user = app.submitter or rev.submitter or current_user
                 rev_user = app.reviewer
+                real_comments_count = sum(
+                    1 for act in (rev.activities or []) if act.action == "Comment Added" and act.details
+                )
+                if app.comment and not is_automated_submission_summary(app.comment):
+                    real_comments_count += 1
+
                 results.append({
                     "id": str(app.id),
                     "reviewId": str(rev.id),
@@ -694,7 +700,7 @@ def get_pending_approvals(
                     "status": "pending",
                     "reviewDate": rev.created_at.strftime("%b %d"),
                     "contentExcerpt": rev.content[:140] + "...",
-                    "commentsCount": len(rev.activities or []),
+                    "commentsCount": real_comments_count,
                 })
     return results
 
@@ -851,10 +857,13 @@ def add_review_comment(
     db.commit()
     db.refresh(activity)
 
+    member = workspace_service.get_member(db, review.workspace_id, current_user.id)
+    author_role = member.role if member and member.role else current_user.role
+
     return {
         "id": f"c-{activity.id}",
         "authorName": current_user.name,
-        "authorRole": current_user.role,
+        "authorRole": author_role,
         "text": comment_text,
         "timestamp": activity.created_at.strftime("%b %d, %H:%M"),
     }
@@ -918,6 +927,24 @@ def _map_review_to_historical_record(r: ContentReview, current_user: User) -> Di
             "avatar": "https://api.dicebear.com/7.x/initials/svg?seed=Reviewer",
         }
 
+    db = None
+    try:
+        from sqlalchemy.orm import object_session
+        db = object_session(r)
+    except Exception:
+        db = None
+
+    def _resolve_user_role(u: Optional[User], default_role: str = "Member") -> str:
+        if not u:
+            return default_role
+        if db and getattr(r, "workspace_id", None):
+            member = workspace_service.get_member(db, r.workspace_id, u.id)
+            if member and member.role:
+                return member.role
+        if getattr(u, "role", None) and u.role != "User":
+            return u.role
+        return default_role
+
     # Extract real comments from activities and approvals
     real_comments = []
     for act in activities_list:
@@ -926,19 +953,23 @@ def _map_review_to_historical_record(r: ContentReview, current_user: User) -> Di
             real_comments.append({
                 "id": f"c-{act.id}",
                 "authorName": act_user.name,
-                "authorRole": getattr(act_user, "role", None) or "Member",
+                "authorRole": _resolve_user_role(act_user, default_role="Member"),
                 "authorAvatar": f"https://api.dicebear.com/7.x/initials/svg?seed={act_user.name}",
                 "text": act.details,
                 "timestamp": act.created_at.strftime("%b %d, %H:%M"),
             })
 
     for appr in approvals_list:
-        if appr.comment and not any(c["text"] == appr.comment for c in real_comments):
+        if (
+            appr.comment
+            and not is_automated_submission_summary(appr.comment)
+            and not any(c["text"] == appr.comment for c in real_comments)
+        ):
             appr_user = getattr(appr, "reviewer", None) or getattr(appr, "submitter", None) or current_user
             real_comments.append({
                 "id": f"appr-c-{appr.id}",
                 "authorName": appr_user.name,
-                "authorRole": getattr(appr_user, "role", None) or "Reviewer",
+                "authorRole": _resolve_user_role(appr_user, default_role="Reviewer"),
                 "authorAvatar": f"https://api.dicebear.com/7.x/initials/svg?seed={appr_user.name}",
                 "text": appr.comment,
                 "timestamp": appr.updated_at.strftime("%b %d, %H:%M"),
@@ -965,17 +996,28 @@ def _map_review_to_historical_record(r: ContentReview, current_user: User) -> Di
         },
     ]
 
+    seen_stages = set()
     for act in activities_list:
-        if act.action not in ("Audit Completed", "Content submitted"):
-            timeline.append({
-                "id": f"tl-act-{act.id}",
-                "stage": act.action,
-                "actorName": act.user.name if getattr(act, "user", None) else "System",
-                "actorRole": getattr(act.user, "role", "Governance") if getattr(act, "user", None) else "Governance",
-                "timestamp": act.created_at.strftime("%b %d, %H:%M"),
-                "note": act.details,
-                "status": "completed",
-            })
+        if act.action in ("Audit Completed", "Content submitted", "Review approved"):
+            continue
+        stage_key = (act.action, act.details)
+        if stage_key in seen_stages:
+            continue
+        seen_stages.add(stage_key)
+
+        act_user = getattr(act, "user", None)
+        actor_name = act_user.name if act_user else "System"
+        actor_role = getattr(act_user, "role", "Governance") if act_user else "Governance"
+
+        timeline.append({
+            "id": f"tl-act-{act.id}",
+            "stage": act.action,
+            "actorName": actor_name,
+            "actorRole": actor_role,
+            "timestamp": act.created_at.strftime("%b %d, %H:%M"),
+            "note": act.details,
+            "status": "completed",
+        })
 
     if r.status == "approved":
         timeline.append({

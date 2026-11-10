@@ -10,6 +10,19 @@ from app.models.activity import ReviewActivity
 from app.models.user import User
 
 
+def is_automated_submission_summary(text: Optional[str]) -> bool:
+    if not text:
+        return False
+    lower = text.strip().lower()
+    return (
+        lower.startswith("submitted for sign-off with")
+        or lower.startswith("submitted for tier")
+        or lower.startswith("submitted by")
+        or lower.startswith("submission summary:")
+        or "corrections applied. current compliance score:" in lower
+    )
+
+
 class ApprovalService:
     @staticmethod
     def get_by_id(db: Session, approval_id: int) -> Optional[Approval]:
@@ -53,31 +66,73 @@ class ApprovalService:
         user: User,
         comment: Optional[str] = None,
         reviewer_id: Optional[int] = None,
+        submission_summary: Optional[str] = None,
     ) -> Approval:
         review = db.query(ContentReview).filter(ContentReview.id == review_id).first()
         if not review:
             raise ValueError("Content review not found.")
 
-        # Create or update pending approval request
-        approval = Approval(
-            review_id=review.id,
-            brand_rule_id=None,
-            submitted_by=user.id,
-            reviewer_id=reviewer_id,
-            status="pending",
-            comment=comment,
+        clean_comment = comment.strip() if comment and comment.strip() else None
+
+        # If comment contains an automated submission summary, route it to submission_summary
+        # so it is recorded as a system activity event and never treated as a human comment
+        if clean_comment and is_automated_submission_summary(clean_comment):
+            if not submission_summary:
+                submission_summary = clean_comment
+            clean_comment = None
+
+        # Check for existing pending approval request to prevent duplicate approval requests
+        existing_approval = (
+            db.query(Approval)
+            .filter(Approval.review_id == review.id, Approval.status == "pending")
+            .first()
         )
-        db.add(approval)
+        if existing_approval:
+            approval = existing_approval
+            if clean_comment:
+                approval.comment = clean_comment
+            if reviewer_id:
+                approval.reviewer_id = reviewer_id
+        else:
+            approval = Approval(
+                review_id=review.id,
+                brand_rule_id=None,
+                submitted_by=user.id,
+                reviewer_id=reviewer_id,
+                status="pending",
+                comment=clean_comment,
+            )
+            db.add(approval)
+
         review.status = "pending"
 
-        activity = ReviewActivity(
-            review_id=review.id,
-            workspace_id=review.workspace_id,
-            user_id=user.id,
-            action="Approval requested",
-            details=comment or f"Submitted by {user.name} for human reviewer sign-off.",
+        # Check if an "Approval requested" activity already exists to prevent duplicate entries
+        existing_activity = (
+            db.query(ReviewActivity)
+            .filter(
+                ReviewActivity.review_id == review.id,
+                ReviewActivity.action == "Approval requested",
+            )
+            .first()
         )
-        db.add(activity)
+
+        activity_details = (
+            submission_summary
+            or (clean_comment if not is_automated_submission_summary(clean_comment) else None)
+            or f"Submitted by {user.name} for human reviewer sign-off."
+        )
+
+        if not existing_activity:
+            activity = ReviewActivity(
+                review_id=review.id,
+                workspace_id=review.workspace_id,
+                user_id=user.id,
+                action="Approval requested",
+                details=activity_details,
+            )
+            db.add(activity)
+        elif submission_summary:
+            existing_activity.details = submission_summary
 
         db.commit()
         db.refresh(approval)

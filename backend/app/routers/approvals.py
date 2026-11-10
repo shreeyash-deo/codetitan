@@ -58,6 +58,7 @@ def request_review_approval(
         )
 
     comment = payload.comment if payload else None
+    summary = payload.summary if payload else None
     reviewer_id = payload.reviewer_id if payload else None
     try:
         approval = approval_service.request_review_approval(
@@ -66,6 +67,7 @@ def request_review_approval(
             user=current_user,
             comment=comment,
             reviewer_id=reviewer_id,
+            submission_summary=summary,
         )
         return approval
     except ValueError as val_err:

@@ -259,7 +259,14 @@ export const ReviewDetailReportModal: React.FC<ReviewDetailReportModalProps> = (
 
           {/* Tab 3: Approval Timeline */}
           {activeTab === 'timeline' && (
-            <div className="overflow-y-auto flex-1 p-2">
+            <div className="overflow-y-auto flex-1 p-2 space-y-3">
+              <div className="flex items-center justify-between text-xs text-slate-500 pb-2 border-b border-border">
+                <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                  Chronological Audit Trail & Activity Ledger
+                </span>
+                <span className="text-[10px] text-slate-400">System-recorded stages & events</span>
+              </div>
               <ApprovalTimelineWidget timeline={review.timeline} />
             </div>
           )}
@@ -268,25 +275,46 @@ export const ReviewDetailReportModal: React.FC<ReviewDetailReportModalProps> = (
           {activeTab === 'comments' && (
             <div className="space-y-4 overflow-y-auto flex-1 flex flex-col justify-between">
               <div className="space-y-3">
-                {review.comments.map((c) => (
-                  <div
-                    key={c.id}
-                    className="p-3 rounded-lg border border-border bg-slate-50/60 text-xs space-y-1.5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Avatar className="w-5 h-5">
-                          <AvatarImage src={c.authorAvatar} />
-                          <AvatarFallback>{c.authorName.substring(0, 2)}</AvatarFallback>
-                        </Avatar>
-                        <span className="font-semibold text-slate-900">{c.authorName}</span>
-                        <span className="text-[10px] text-slate-400">({c.authorRole})</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-mono">{c.timestamp}</span>
-                    </div>
-                    <p className="text-slate-700 leading-relaxed pl-7">{c.text}</p>
+                <div className="flex items-center justify-between text-xs text-slate-500 pb-2 border-b border-border">
+                  <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                    <MessageSquare className="w-3.5 h-3.5 text-blue-600" />
+                    Human Reviewer & Team Feedback
+                  </span>
+                  <span className="text-[10px] text-slate-400">Authentic editorial feedback</span>
+                </div>
+
+                {review.comments.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-500 bg-slate-50/50 rounded-lg border border-dashed border-slate-200 space-y-1">
+                    <MessageSquare className="w-6 h-6 text-slate-300 mx-auto mb-1.5" />
+                    <p className="font-semibold text-slate-700">No Reviewer Comments Yet</p>
+                    <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                      Automated submission summaries are recorded in the audit timeline. Use the box below to post genuine editorial feedback.
+                    </p>
                   </div>
-                ))}
+                ) : (
+                  review.comments.map((c) => (
+                    <div
+                      key={c.id}
+                      className="p-3 rounded-lg border border-border bg-slate-50/60 text-xs space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Avatar className="w-5 h-5">
+                            <AvatarImage src={c.authorAvatar} />
+                            <AvatarFallback>{c.authorName.substring(0, 2)}</AvatarFallback>
+                          </Avatar>
+                          <span className="font-semibold text-slate-900">{c.authorName}</span>
+                          <span className="text-[10px] text-slate-400">({c.authorRole})</span>
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Human Author
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-mono">{c.timestamp}</span>
+                      </div>
+                      <p className="text-slate-700 leading-relaxed pl-7">{c.text}</p>
+                    </div>
+                  ))
+                )}
               </div>
 
               {/* Add comment input */}

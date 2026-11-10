@@ -456,7 +456,7 @@ export const ContentReviewPage: React.FC = () => {
 
         if (reviewIdToSubmit) {
           await apiClient.post(`/api/v1/reviews/${reviewIdToSubmit}/request-approval`, {
-            comment: `Submitted for sign-off with ${acceptedCount} corrections applied. Current compliance score: ${currentScore}%.`,
+            summary: `Submitted for sign-off with ${acceptedCount} corrections applied. Current compliance score: ${currentScore}%.`,
           })
         }
       } catch (err: any) {
@@ -503,16 +503,7 @@ export const ContentReviewPage: React.FC = () => {
       })),
       acceptedSuggestionsCount: acceptedCount,
       rejectedSuggestionsCount: rejectedCount,
-      comments: [
-        {
-          id: `c-${Date.now()}`,
-          authorName: authorName,
-          authorRole: authorRole,
-          authorAvatar: `https://api.dicebear.com/7.x/initials/svg?seed=${authorName}`,
-          text: `Submitted for Tier 2/3 sign-off with ${acceptedCount} corrections applied. Current compliance score: ${currentScore}%.`,
-          timestamp: 'Just now',
-        },
-      ],
+      comments: [],
       timeline: [
         {
           id: `t-${Date.now()}-1`,
@@ -520,6 +511,7 @@ export const ContentReviewPage: React.FC = () => {
           actorName: authorName,
           actorRole: authorRole,
           timestamp: 'Just now',
+          note: `Submission summary: ${acceptedCount} corrections applied. Current compliance score: ${currentScore}%.`,
           status: 'completed',
         },
         {

@@ -17,6 +17,7 @@ class ApprovalCreate(ApprovalBase):
 
 class RequestApprovalPayload(BaseModel):
     comment: Optional[str] = Field(None, description="Optional note for the reviewer")
+    summary: Optional[str] = Field(None, description="System-generated submission summary")
     reviewer_id: Optional[int] = Field(None, description="Specific reviewer assignment")
 
 

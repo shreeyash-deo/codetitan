@@ -173,21 +173,12 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
               return step
             })
 
-            const approvalComment = {
-              id: `c-${Date.now()}`,
-              authorName,
-              authorRole,
-              authorAvatar: `https://api.dicebear.com/7.x/initials/svg?seed=${authorName}`,
-              text: 'Content explicitly verified and approved for publishing under brand guidelines.',
-              timestamp,
-            }
-
             return {
               ...r,
               approvalStatus: 'approved' as const,
               score: Math.max(r.score, 95),
               violationsCount: 0,
-              comments: [...r.comments, approvalComment],
+              comments: r.comments,
               timeline: updatedTimeline,
             }
           }

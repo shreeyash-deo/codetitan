@@ -16,6 +16,11 @@ interface ApprovalTimelineWidgetProps {
   className?: string
 }
 
+const isSystemActor = (role?: string) => {
+  const r = (role || '').toLowerCase()
+  return r.includes('sentinel') || r.includes('system') || r.includes('automated') || r.includes('governance')
+}
+
 export const ApprovalTimelineWidget: React.FC<ApprovalTimelineWidgetProps> = ({
   timeline,
   className = '',
@@ -51,17 +56,28 @@ export const ApprovalTimelineWidget: React.FC<ApprovalTimelineWidgetProps> = ({
 
               <div className="rounded-md p-2 -my-1 transition-colors hover:bg-slate-50/80">
                 <div className="flex items-center justify-between gap-2">
-                  <span
-                    className={`font-semibold ${
-                      isCompleted
-                        ? 'text-slate-900'
-                        : isCurrent
-                        ? 'text-blue-700'
-                        : 'text-slate-400'
-                    }`}
-                  >
-                    {event.stage}
-                  </span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span
+                      className={`font-semibold ${
+                        isCompleted
+                          ? 'text-slate-900'
+                          : isCurrent
+                          ? 'text-blue-700'
+                          : 'text-slate-400'
+                      }`}
+                    >
+                      {event.stage}
+                    </span>
+                    {isSystemActor(event.actorRole) ? (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                        System Event
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                        User Activity
+                      </span>
+                    )}
+                  </div>
 
                   <span className="text-[10px] text-slate-400 font-mono">
                     {event.timestamp}
