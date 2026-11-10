@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.user import UserOut
 from app.schemas.finding import FindingOut, FindingCreate
 from app.schemas.activity import ReviewActivityOut
+from app.schemas.approval import ApprovalOut
 
 ContentType = Literal[
     "social_media",
@@ -54,6 +55,7 @@ class ContentReviewOut(ContentReviewBase):
     updated_at: datetime
     submitter: Optional[UserOut] = None
     findings: Optional[List[FindingOut]] = None
+    approvals: Optional[List[ApprovalOut]] = None
     activities: Optional[List[ReviewActivityOut]] = None
 
     model_config = ConfigDict(from_attributes=True)

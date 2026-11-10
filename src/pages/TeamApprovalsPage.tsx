@@ -9,6 +9,8 @@ import { RequestChangesDialog } from '@/components/approvals/RequestChangesDialo
 import { AddCommentDialog } from '@/components/approvals/AddCommentDialog'
 import { ReviewDetailReportModal } from '@/components/history/ReviewDetailReportModal'
 import { useGovernance } from '@/context/GovernanceContext'
+import { useWorkspace } from '@/hooks/useWorkspace'
+import { useAuth } from '@/context/AuthContext'
 import type { HistoricalReviewRecord } from '@/types/approval'
 import {
   UserCheck,
@@ -18,10 +20,18 @@ import {
   Clock,
   GitBranch,
   Eye,
+  ShieldCheck,
+  Loader2,
 } from 'lucide-react'
 
 export const TeamApprovalsPage: React.FC = () => {
-  const { reviews, approveContent, requestChanges, addComment } = useGovernance()
+  const { reviews, approveContent, requestChanges, addComment, isLoading } = useGovernance()
+  const { user } = useAuth()
+  const { currentWorkspace } = useWorkspace()
+
+  const isReviewerOrAdmin =
+    currentWorkspace?.role?.toLowerCase() === 'admin' ||
+    currentWorkspace?.role?.toLowerCase() === 'reviewer'
 
   const [activeTab, setActiveTab] = useState<'pending' | 'all' | 'needs_revision' | 'approved'>('pending')
   const [targetReviewForChanges, setTargetReviewForChanges] = useState<HistoricalReviewRecord | null>(null)
@@ -184,14 +194,34 @@ export const TeamApprovalsPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Employee Role Notice if not Reviewer/Admin */}
+      {!isReviewerOrAdmin && (
+        <div className="p-3.5 rounded-lg bg-blue-50/70 border border-blue-200 text-xs text-blue-900 flex items-center gap-2.5">
+          <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
+          <span>
+            You are signed in with the <strong>Employee</strong> role in this organisation. Submissions can be inspected and commented on, but publishing approvals and change requests require <strong>Reviewer</strong> or <strong>Admin</strong> privileges.
+          </span>
+        </div>
+      )}
+
       {/* Approval Requests Cards */}
       <div className="space-y-4">
-        {displayedReviews.length === 0 ? (
+        {isLoading ? (
+          <Card className="p-12 text-center space-y-2">
+            <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto" />
+            <h4 className="text-sm font-bold text-slate-900">Loading Governance Queue...</h4>
+            <p className="text-xs text-slate-500">Retrieving active submissions and approvals</p>
+          </Card>
+        ) : displayedReviews.length === 0 ? (
           <Card className="p-12 text-center space-y-2">
             <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-            <h4 className="text-sm font-bold text-slate-900">Queue is Clear</h4>
-            <p className="text-xs text-slate-500">
-              There are no content approval requests matching this filter.
+            <h4 className="text-sm font-bold text-slate-900">
+              {reviews.length === 0 ? 'No Submissions in this Organisation' : 'Queue is Clear'}
+            </h4>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto">
+              {reviews.length === 0
+                ? 'Submit marketing copy from the Content Review Studio to initiate the review and sign-off workflow.'
+                : 'There are no content approval requests matching this filter.'}
             </p>
           </Card>
         ) : (
@@ -314,27 +344,34 @@ export const TeamApprovalsPage: React.FC = () => {
                   </Button>
 
                   {item.approvalStatus !== 'approved' && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5 text-xs text-amber-700 hover:text-amber-800 hover:bg-amber-50 border-amber-200"
-                        onClick={() => setTargetReviewForChanges(item)}
-                      >
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Request Changes</span>
-                      </Button>
+                    isReviewerOrAdmin ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5 text-xs text-amber-700 hover:text-amber-800 hover:bg-amber-50 border-amber-200"
+                          onClick={() => setTargetReviewForChanges(item)}
+                        >
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Request Changes</span>
+                        </Button>
 
-                      <Button
-                        variant="primaryBlue"
-                        size="sm"
-                        className="gap-1.5 text-xs font-semibold shadow-xs"
-                        onClick={() => approveContent(item.id)}
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Approve Content</span>
-                      </Button>
-                    </>
+                        <Button
+                          variant="primaryBlue"
+                          size="sm"
+                          className="gap-1.5 text-xs font-semibold shadow-xs"
+                          onClick={() => approveContent(item.id)}
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Approve Content</span>
+                        </Button>
+                      </>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 bg-slate-100 px-3 py-1.5 rounded-md border border-slate-200">
+                        <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Reviewer Sign-off Required</span>
+                      </span>
+                    )
                   )}
                 </div>
               </div>

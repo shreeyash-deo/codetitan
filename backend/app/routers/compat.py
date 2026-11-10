@@ -543,26 +543,28 @@ def get_pending_approvals(
         if app.review_id:
             rev = db.query(ContentReview).filter(ContentReview.id == app.review_id).first()
             if rev:
+                sub_user = app.submitter or rev.submitter or current_user
+                rev_user = app.reviewer
                 results.append({
                     "id": str(app.id),
                     "reviewId": str(rev.id),
                     "title": rev.title,
                     "contentType": rev.content_type,
                     "submittedBy": {
-                        "name": current_user.name,
-                        "role": current_user.role,
-                        "email": current_user.email,
+                        "name": sub_user.name,
+                        "role": sub_user.role or "Employee",
+                        "email": sub_user.email,
                     },
                     "assignedReviewer": {
-                        "name": "Sarah Chen",
-                        "role": "Brand Lead",
-                        "email": "sarah.chen@novapay.io",
+                        "name": rev_user.name if rev_user else "Designated Reviewer",
+                        "role": rev_user.role if rev_user else "Reviewer",
+                        "email": rev_user.email if rev_user else "reviewer@brandshield.local",
                     },
                     "score": rev.compliance_score,
                     "status": "pending",
                     "reviewDate": rev.created_at.strftime("%b %d"),
                     "contentExcerpt": rev.content[:140] + "...",
-                    "commentsCount": 1,
+                    "commentsCount": len(rev.activities or []),
                 })
     return results
 
@@ -728,6 +730,170 @@ def add_review_comment(
 # HISTORY ENDPOINTS (Frontend format compatibility)
 # ============================================================================
 
+def _map_review_to_historical_record(r: ContentReview, current_user: User) -> Dict[str, Any]:
+    findings = []
+    for f in (r.findings or []):
+        findings.append({
+            "id": str(f.id),
+            "category": f.category,
+            "severity": f.severity,
+            "originalText": f.excerpt,
+            "explanation": f.explanation,
+            "supportingGuidelineCode": f.guideline_reference.split(":")[0] if ":" in f.guideline_reference else "RULE",
+            "supportingGuidelineTitle": f.guideline_reference,
+            "suggestedCorrection": f.suggested_correction or "",
+            "confidence": int(f.confidence * 100) if f.confidence <= 1.0 else int(f.confidence),
+        })
+
+    submitter = r.submitter or current_user
+    submitted_by = {
+        "name": submitter.name,
+        "role": submitter.role or "Employee",
+        "email": submitter.email,
+        "avatar": f"https://api.dicebear.com/7.x/initials/svg?seed={submitter.name}",
+    }
+
+    # Identify reviewer from approvals or activities
+    reviewer_user = None
+    approvals_list = getattr(r, "approvals", None) or []
+    activities_list = getattr(r, "activities", None) or []
+    findings_list = getattr(r, "findings", None) or []
+
+    for appr in approvals_list:
+        if getattr(appr, "reviewer", None):
+            reviewer_user = appr.reviewer
+            break
+    if not reviewer_user:
+        for act in activities_list:
+            if act.action in ("Review approved", "Changes requested") and getattr(act, "user", None):
+                reviewer_user = act.user
+                break
+
+    if reviewer_user:
+        assigned_reviewer = {
+            "name": reviewer_user.name,
+            "role": getattr(reviewer_user, "role", None) or "Reviewer",
+            "email": reviewer_user.email,
+            "avatar": f"https://api.dicebear.com/7.x/initials/svg?seed={reviewer_user.name}",
+        }
+    else:
+        assigned_reviewer = {
+            "name": "Governance Reviewer",
+            "role": "Reviewer",
+            "email": "reviewer@brandshield.local",
+            "avatar": "https://api.dicebear.com/7.x/initials/svg?seed=Reviewer",
+        }
+
+    # Extract real comments from activities and approvals
+    real_comments = []
+    for act in activities_list:
+        if act.action == "Comment Added" and act.details:
+            act_user = getattr(act, "user", None) or current_user
+            real_comments.append({
+                "id": f"c-{act.id}",
+                "authorName": act_user.name,
+                "authorRole": getattr(act_user, "role", None) or "Member",
+                "authorAvatar": f"https://api.dicebear.com/7.x/initials/svg?seed={act_user.name}",
+                "text": act.details,
+                "timestamp": act.created_at.strftime("%b %d, %H:%M"),
+            })
+
+    for appr in approvals_list:
+        if appr.comment and not any(c["text"] == appr.comment for c in real_comments):
+            appr_user = getattr(appr, "reviewer", None) or getattr(appr, "submitter", None) or current_user
+            real_comments.append({
+                "id": f"appr-c-{appr.id}",
+                "authorName": appr_user.name,
+                "authorRole": getattr(appr_user, "role", None) or "Reviewer",
+                "authorAvatar": f"https://api.dicebear.com/7.x/initials/svg?seed={appr_user.name}",
+                "text": appr.comment,
+                "timestamp": appr.updated_at.strftime("%b %d, %H:%M"),
+            })
+
+    # Construct chronological audit timeline
+    timeline = [
+        {
+            "id": f"tl-1-{r.id}",
+            "stage": "Content submitted",
+            "actorName": submitted_by["name"],
+            "actorRole": submitted_by["role"],
+            "timestamp": r.created_at.strftime("%b %d, %H:%M"),
+            "status": "completed",
+        },
+        {
+            "id": f"tl-2-{r.id}",
+            "stage": "AI review completed",
+            "actorName": "BrandShield AI",
+            "actorRole": "Automated Sentinel",
+            "timestamp": r.created_at.strftime("%b %d, %H:%M"),
+            "note": f"Initial compliance score: {r.compliance_score}/100.",
+            "status": "completed",
+        },
+    ]
+
+    for act in activities_list:
+        if act.action not in ("Audit Completed", "Content submitted"):
+            timeline.append({
+                "id": f"tl-act-{act.id}",
+                "stage": act.action,
+                "actorName": act.user.name if getattr(act, "user", None) else "System",
+                "actorRole": getattr(act.user, "role", "Governance") if getattr(act, "user", None) else "Governance",
+                "timestamp": act.created_at.strftime("%b %d, %H:%M"),
+                "note": act.details,
+                "status": "completed",
+            })
+
+    if r.status == "approved":
+        timeline.append({
+            "id": f"tl-dec-{r.id}",
+            "stage": "Final approval",
+            "actorName": assigned_reviewer["name"],
+            "actorRole": assigned_reviewer["role"],
+            "timestamp": r.updated_at.strftime("%b %d, %H:%M"),
+            "status": "completed",
+        })
+    elif r.status in ("needs_changes", "needs_revision"):
+        timeline.append({
+            "id": f"tl-dec-{r.id}",
+            "stage": "Changes requested",
+            "actorName": assigned_reviewer["name"],
+            "actorRole": assigned_reviewer["role"],
+            "timestamp": r.updated_at.strftime("%b %d, %H:%M"),
+            "status": "current",
+        })
+    else:
+        timeline.append({
+            "id": f"tl-dec-{r.id}",
+            "stage": "Reviewer decision",
+            "actorName": assigned_reviewer["name"],
+            "actorRole": assigned_reviewer["role"],
+            "timestamp": "Pending",
+            "status": "current",
+        })
+
+    approval_status = "approved" if r.status == "approved" else ("needs_revision" if r.status in ("needs_changes", "needs_revision") else "pending")
+
+    return {
+        "id": str(r.id),
+        "title": r.title,
+        "contentType": r.content_type,
+        "channel": "Social",
+        "submittedBy": submitted_by,
+        "assignedReviewer": assigned_reviewer,
+        "score": r.compliance_score,
+        "violationsCount": len(findings),
+        "reviewDate": r.created_at.strftime("%b %d, %Y"),
+        "approvalStatus": approval_status,
+        "originalContent": r.original_content,
+        "correctedContent": r.content,
+        "findings": findings,
+        "acceptedSuggestionsCount": sum(1 for f in findings_list if getattr(f, "status", None) in ("accepted", "applied")),
+        "rejectedSuggestionsCount": sum(1 for f in findings_list if getattr(f, "status", None) == "rejected"),
+        "comments": real_comments,
+        "timeline": timeline,
+    }
+
+
 @router.get("/history", summary="List historical review ledger")
 def get_review_history(
     brand_id: Optional[str] = Query(None),
@@ -746,67 +912,7 @@ def get_review_history(
         status=status,
     )
 
-    results = []
-    for r in reviews_res.items:
-        findings = []
-        for f in (r.findings or []):
-            findings.append({
-                "id": str(f.id),
-                "category": f.category,
-                "severity": f.severity,
-                "originalText": f.excerpt,
-                "explanation": f.explanation,
-                "supportingGuidelineCode": f.guideline_reference.split(":")[0] if ":" in f.guideline_reference else "RULE",
-                "supportingGuidelineTitle": f.guideline_reference,
-                "suggestedCorrection": f.suggested_correction or "",
-                "confidence": int(f.confidence * 100) if f.confidence <= 1.0 else int(f.confidence),
-            })
-
-        results.append({
-            "id": str(r.id),
-            "title": r.title,
-            "contentType": r.content_type,
-            "channel": "Social",
-            "submittedBy": {
-                "name": current_user.name,
-                "role": current_user.role,
-                "email": current_user.email,
-            },
-            "assignedReviewer": {
-                "name": "Sarah Chen",
-                "role": "Brand Lead",
-                "email": "sarah.chen@novapay.io",
-            },
-            "score": r.compliance_score,
-            "violationsCount": len(findings),
-            "reviewDate": r.created_at.strftime("%b %d, %Y"),
-            "approvalStatus": "approved" if r.status == "approved" else ("needs_revision" if r.status in ("needs_changes", "needs_revision") else "pending"),
-            "originalContent": r.original_content,
-            "correctedContent": r.content,
-            "findings": findings,
-            "acceptedSuggestionsCount": sum(1 for f in (r.findings or []) if f.status in ("accepted", "applied")),
-            "rejectedSuggestionsCount": sum(1 for f in (r.findings or []) if f.status == "rejected"),
-            "comments": [],
-            "timeline": [
-                {
-                    "id": f"tl-1-{r.id}",
-                    "stage": "Content submitted",
-                    "actorName": current_user.name,
-                    "actorRole": current_user.role,
-                    "timestamp": r.created_at.strftime("%b %d, %H:%M"),
-                    "status": "completed",
-                },
-                {
-                    "id": f"tl-2-{r.id}",
-                    "stage": "Final approval" if r.status == "approved" else "Reviewer decision",
-                    "actorName": "Sarah Chen",
-                    "actorRole": "Brand Lead",
-                    "timestamp": r.updated_at.strftime("%b %d, %H:%M"),
-                    "status": "completed" if r.status == "approved" else "current",
-                },
-            ],
-        })
-    return results
+    return [_map_review_to_historical_record(r, current_user) for r in reviews_res.items]
 
 
 @router.get("/history/{id}", summary="Get single historical review by ID")
@@ -830,46 +936,4 @@ def get_history_by_id(
             detail="Access denied. You are not a member of the workspace for this review.",
         )
 
-    findings = []
-    for f in (review.findings or []):
-        findings.append({
-            "id": str(f.id),
-            "category": f.category,
-            "severity": f.severity,
-            "originalText": f.excerpt,
-            "explanation": f.explanation,
-            "supportingGuidelineCode": f.guideline_reference.split(":")[0] if ":" in f.guideline_reference else "RULE",
-            "supportingGuidelineTitle": f.guideline_reference,
-            "suggestedCorrection": f.suggested_correction or "",
-            "confidence": int(f.confidence * 100) if f.confidence <= 1.0 else int(f.confidence),
-        })
-
-    submitter_data = {
-        "name": review.submitter.name if review.submitter else current_user.name,
-        "role": review.submitter.role if review.submitter else current_user.role,
-        "email": review.submitter.email if review.submitter else current_user.email,
-    }
-
-    return {
-        "id": str(review.id),
-        "title": review.title,
-        "contentType": review.content_type,
-        "channel": "Social",
-        "submittedBy": submitter_data,
-        "assignedReviewer": {
-            "name": "Sarah Chen",
-            "role": "Brand Lead",
-            "email": "sarah.chen@novapay.io",
-        },
-        "score": review.compliance_score,
-        "violationsCount": len(findings),
-        "reviewDate": review.created_at.strftime("%b %d, %Y"),
-        "approvalStatus": "approved" if review.status == "approved" else ("needs_revision" if review.status in ("needs_changes", "needs_revision") else "pending"),
-        "originalContent": review.original_content,
-        "correctedContent": review.content,
-        "findings": findings,
-        "acceptedSuggestionsCount": sum(1 for f in (review.findings or []) if f.status in ("accepted", "applied")),
-        "rejectedSuggestionsCount": sum(1 for f in (review.findings or []) if f.status == "rejected"),
-        "comments": [],
-        "timeline": [],
-    }
+    return _map_review_to_historical_record(review, current_user)

@@ -22,7 +22,7 @@ import {
 } from 'lucide-react'
 
 export const ReviewHistoryPage: React.FC = () => {
-  const { reviews, addComment } = useGovernance()
+  const { reviews, addComment, isLoading } = useGovernance()
   const { success } = useToast()
 
   const [activeFilter, setActiveFilter] = useState<ApprovalFilter>('all')
@@ -200,10 +200,40 @@ export const ReviewHistoryPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
-                {filteredReviews.length === 0 ? (
+                {isLoading ? (
                   <tr>
-                    <td colSpan={9} className="p-8 text-center text-slate-400">
-                      No review history records match the selected filter.
+                    <td colSpan={9} className="p-10 text-center text-slate-400">
+                      Loading review history ledger from database...
+                    </td>
+                  </tr>
+                ) : filteredReviews.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="p-10 text-center space-y-2">
+                      <p className="text-slate-600 font-medium">
+                        {reviews.length === 0
+                          ? 'No review history recorded for this organisation yet'
+                          : 'No review history records match the selected filter'}
+                      </p>
+                      <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                        {reviews.length === 0
+                          ? 'Submit marketing copy in the Content Review Studio to record immutable audit trials.'
+                          : 'Try clearing your search query or selecting "All Reviews".'}
+                      </p>
+                      {reviews.length > 0 && (
+                        <div className="pt-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-xs h-7"
+                            onClick={() => {
+                              setActiveFilter('all')
+                              setSearchQuery('')
+                            }}
+                          >
+                            Clear Filters
+                          </Button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ) : (

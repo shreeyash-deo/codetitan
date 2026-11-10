@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useWorkspace } from '@/hooks/useWorkspace'
+import { useAuth } from '@/context/AuthContext'
 import { useGovernance } from '@/context/GovernanceContext'
 import { useToast } from '@/context/ToastContext'
 import { PageHeader } from '@/components/common/PageHeader'
@@ -44,8 +45,9 @@ import {
 
 export const ContentReviewPage: React.FC = () => {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const { currentWorkspace } = useWorkspace()
-  const { addReview } = useGovernance()
+  const { addReview, refreshData } = useGovernance()
   const { success, warning, info, error: toastError } = useToast()
 
   // Workspace configuration state
@@ -259,33 +261,59 @@ export const ContentReviewPage: React.FC = () => {
       return
     }
 
-    if (!apiClient.isMockMode() && activeReviewId) {
+    let reviewIdToSubmit = activeReviewId
+
+    if (!apiClient.isMockMode()) {
       try {
-        await apiClient.post(`/api/v1/reviews/${activeReviewId}/request-approval`, {
-          comment: `Submitted for sign-off with ${acceptedCount} corrections applied. Current compliance score: ${currentScore}%.`,
-        })
-      } catch (err) {
-        // Continue dispatching to context
+        if (!reviewIdToSubmit) {
+          const channel = contentType === 'Blog' ? 'Blog' : (contentType === 'Advertisement' ? 'Ad Creative' : 'Social')
+          const result = await reviewService.submitContentForReview({
+            title: title.trim() || 'Marketing Asset',
+            content: content.trim(),
+            contentType,
+            channel,
+            strictness,
+            activeCategories,
+          }, currentWorkspace?.id)
+          reviewIdToSubmit = result.id
+          setActiveReviewId(result.id)
+        } else if (content !== originalContent) {
+          await apiClient.patch(`/api/v1/reviews/${reviewIdToSubmit}`, {
+            content: content,
+          })
+        }
+
+        if (reviewIdToSubmit) {
+          await apiClient.post(`/api/v1/reviews/${reviewIdToSubmit}/request-approval`, {
+            comment: `Submitted for sign-off with ${acceptedCount} corrections applied. Current compliance score: ${currentScore}%.`,
+          })
+        }
+      } catch (err: any) {
+        toastError(err?.detail || err?.message || 'Approval request failed', 'Submission Notice')
       }
     }
 
+    const authorName = user?.name || 'Author'
+    const authorRole = currentWorkspace?.role || 'Employee'
+    const authorEmail = user?.email || 'author@brandshield.local'
+
     // Create full HistoricalReviewRecord and dispatch to GovernanceContext!
     const newApprovalRecord: HistoricalReviewRecord = {
-      id: `rev-sub-${Date.now().toString().slice(-4)}`,
-      title: title.trim(),
+      id: reviewIdToSubmit || `rev-sub-${Date.now().toString().slice(-4)}`,
+      title: title.trim() || 'Marketing Collateral',
       contentType: `${contentType} Collateral`,
       channel: contentType === 'Blog' ? 'Blog' : (contentType === 'Advertisement' ? 'Ad Creative' : 'Social'),
       submittedBy: {
-        name: 'Sarah Chen',
-        role: 'Brand Lead',
-        email: 'sarah.chen@novapay.io',
-        avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
+        name: authorName,
+        role: authorRole,
+        email: authorEmail,
+        avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${authorName}`,
       },
       assignedReviewer: {
-        name: 'Marcus Vance',
-        role: 'Senior Compliance Reviewer',
-        email: 'marcus@novapay.io',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+        name: 'Designated Reviewer',
+        role: 'Reviewer',
+        email: 'reviewer@brandshield.local',
+        avatar: 'https://api.dicebear.com/7.x/initials/svg?seed=Reviewer',
       },
       score: currentScore,
       violationsCount: pendingCount,
@@ -307,9 +335,9 @@ export const ContentReviewPage: React.FC = () => {
       comments: [
         {
           id: `c-${Date.now()}`,
-          authorName: 'Sarah Chen',
-          authorRole: 'Brand Lead',
-          authorAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
+          authorName: authorName,
+          authorRole: authorRole,
+          authorAvatar: `https://api.dicebear.com/7.x/initials/svg?seed=${authorName}`,
           text: `Submitted for Tier 2/3 sign-off with ${acceptedCount} corrections applied. Current compliance score: ${currentScore}%.`,
           timestamp: 'Just now',
         },
@@ -318,8 +346,8 @@ export const ContentReviewPage: React.FC = () => {
         {
           id: `t-${Date.now()}-1`,
           stage: 'Content submitted',
-          actorName: 'Sarah Chen',
-          actorRole: 'Brand Lead',
+          actorName: authorName,
+          actorRole: authorRole,
           timestamp: 'Just now',
           status: 'completed',
         },
@@ -335,7 +363,7 @@ export const ContentReviewPage: React.FC = () => {
         {
           id: `t-${Date.now()}-3`,
           stage: 'Suggestions applied',
-          actorName: 'Sarah Chen',
+          actorName: authorName,
           actorRole: 'Author',
           timestamp: 'Just now',
           note: `${acceptedCount} suggestions accepted in studio.`,
@@ -344,32 +372,27 @@ export const ContentReviewPage: React.FC = () => {
         {
           id: `t-${Date.now()}-4`,
           stage: 'Approval requested',
-          actorName: 'Sarah Chen',
+          actorName: authorName,
           actorRole: 'Author',
           timestamp: 'Just now',
-          note: 'Assigned to Marcus Vance for Tier 2 verification.',
+          note: 'Assigned for compliance verification.',
           status: 'completed',
         },
         {
           id: `t-${Date.now()}-5`,
           stage: 'Reviewer decision',
-          actorName: 'Marcus Vance',
-          actorRole: 'Senior Compliance Reviewer',
+          actorName: 'Designated Reviewer',
+          actorRole: 'Reviewer',
           timestamp: 'Pending',
           status: 'current',
-        },
-        {
-          id: `t-${Date.now()}-6`,
-          stage: 'Final approval',
-          actorName: 'Sarah Chen',
-          actorRole: 'Brand Lead',
-          timestamp: 'Pending',
-          status: 'pending',
         },
       ],
     }
 
     addReview(newApprovalRecord)
+    if (!apiClient.isMockMode()) {
+      refreshData()
+    }
     success(`"${title}" successfully routed to Team & Approvals queue!`, 'Routed for Approval')
     navigate('/team-approvals')
   }

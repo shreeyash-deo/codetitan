@@ -48,6 +48,15 @@ def request_review_approval(
     current_user: User = Depends(get_current_user),
 ):
     """Submit a content review for managerial / compliance sign-off."""
+    review = db.query(ContentReview).filter(ContentReview.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content review not found.")
+    if not workspace_service.is_member(db, review.workspace_id, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: You are not a member of the workspace for this review.",
+        )
+
     comment = payload.comment if payload else None
     reviewer_id = payload.reviewer_id if payload else None
     try:

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react'
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react'
 import type { HistoricalReviewRecord } from '@/types/approval'
 import type {
   ApprovedRule,
@@ -21,11 +21,13 @@ import {
 } from '@/data/mockKnowledgeBase'
 import { useToast } from './ToastContext'
 import { useWorkspace } from '@/hooks/useWorkspace'
+import { useAuth } from './AuthContext'
 
 interface GovernanceContextValue {
   // Loading & error state
   isLoading: boolean
   error: string | null
+  refreshData: () => Promise<void>
 
   // Reviews & Approvals
   reviews: HistoricalReviewRecord[]
@@ -65,6 +67,7 @@ const GovernanceContext = createContext<GovernanceContextValue | undefined>(unde
 export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { success, info, warning, error: toastError } = useToast()
   const { currentWorkspace } = useWorkspace()
+  const { user } = useAuth()
 
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
@@ -85,63 +88,53 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     apiClient.isMockMode() ? initialSourceDocuments : []
   )
 
-  // Fetch initial data from services
-  useEffect(() => {
-    let isMounted = true
-
-    const loadInitialData = async () => {
-      if (apiClient.isMockMode()) return
-      if (!currentWorkspace) {
-        setApprovedRules([])
-        setPendingCandidates([])
-        setSourceDocuments([])
-        setReviews([])
-        setIsLoading(false)
-        return
-      }
-
-      setIsLoading(true)
-      setError(null)
-      try {
-        const brandId = currentWorkspace.id
-
-        const [rulesData, candidatesData, docsData, historyData] = await Promise.all([
-          guidelineService.getApprovedRules(brandId),
-          guidelineService.getPendingCandidates(brandId),
-          guidelineService.getSourceDocuments(brandId),
-          historyService.getReviewHistory({ brandId }),
-        ])
-
-        if (isMounted) {
-          if (rulesData) {
-            setApprovedRules(rulesData as unknown as ApprovedRule[])
-          }
-          if (candidatesData) {
-            setPendingCandidates(candidatesData as unknown as PendingCandidateRule[])
-          }
-          if (docsData) {
-            setSourceDocuments(docsData as unknown as SourceDocument[])
-          }
-          if (historyData) {
-            setReviews(historyData as unknown as HistoricalReviewRecord[])
-          }
-        }
-      } catch (err) {
-        if (isMounted) {
-          setError(err instanceof Error ? err.message : 'Failed to fetch live governance data from backend')
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false)
-        }
-      }
+  const refreshData = useCallback(async () => {
+    if (apiClient.isMockMode()) return
+    if (!currentWorkspace) {
+      setApprovedRules([])
+      setPendingCandidates([])
+      setSourceDocuments([])
+      setReviews([])
+      setIsLoading(false)
+      return
     }
 
-    loadInitialData()
-    return () => {
-      isMounted = false
+    setIsLoading(true)
+    setError(null)
+    try {
+      const brandId = currentWorkspace.id
+
+      const [rulesData, candidatesData, docsData, historyData] = await Promise.all([
+        guidelineService.getApprovedRules(brandId),
+        guidelineService.getPendingCandidates(brandId),
+        guidelineService.getSourceDocuments(brandId),
+        historyService.getReviewHistory({ brandId }),
+      ])
+
+      if (rulesData) {
+        setApprovedRules(rulesData as unknown as ApprovedRule[])
+      }
+      if (candidatesData) {
+        setPendingCandidates(candidatesData as unknown as PendingCandidateRule[])
+      }
+      if (docsData) {
+        setSourceDocuments(docsData as unknown as SourceDocument[])
+      }
+      if (historyData) {
+        setReviews(historyData as unknown as HistoricalReviewRecord[])
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.detail || err?.message || 'Failed to fetch live governance data from backend'
+      setError(msg)
+    } finally {
+      setIsLoading(false)
     }
   }, [currentWorkspace?.id])
+
+  // Fetch initial data from services
+  useEffect(() => {
+    refreshData()
+  }, [refreshData])
 
   // Review Actions
   const addReview = (newReview: HistoricalReviewRecord) => {
@@ -151,6 +144,8 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const approveContent = async (reviewId: string) => {
     const timestamp = 'Just now'
+    const authorName = user?.name || 'Reviewer'
+    const authorRole = currentWorkspace?.role || 'Reviewer'
 
     try {
       if (!apiClient.isMockMode()) {
@@ -169,9 +164,9 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
             const approvalComment = {
               id: `c-${Date.now()}`,
-              authorName: 'Sarah Chen',
-              authorRole: 'Brand Lead',
-              authorAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
+              authorName,
+              authorRole,
+              authorAvatar: `https://api.dicebear.com/7.x/initials/svg?seed=${authorName}`,
               text: 'Content explicitly verified and approved for publishing under brand guidelines.',
               timestamp,
             }
@@ -190,13 +185,20 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       )
 
       success('Asset officially approved and certified for publication!', 'Approval Granted')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to approve asset')
+      // Background re-fetch to ensure perfect ledger sync
+      refreshData()
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.detail || err?.message || 'Failed to approve asset'
+      setError(msg)
+      toastError(msg, 'Approval Blocked')
+      throw err
     }
   }
 
   const requestChanges = async (reviewId: string, notes: string) => {
     const timestamp = 'Just now'
+    const authorName = user?.name || 'Reviewer'
+    const authorRole = currentWorkspace?.role || 'Reviewer'
 
     try {
       if (!apiClient.isMockMode()) {
@@ -208,9 +210,9 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (r.id === reviewId) {
             const newComment = {
               id: `c-${Date.now()}`,
-              authorName: 'Sarah Chen',
-              authorRole: 'Brand Lead',
-              authorAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
+              authorName,
+              authorRole,
+              authorAvatar: `https://api.dicebear.com/7.x/initials/svg?seed=${authorName}`,
               text: `REVISION REQUESTED: ${notes}`,
               timestamp,
             }
@@ -234,17 +236,23 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       )
 
       warning('Revision instructions routed back to the content author.', 'Changes Requested')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit change request')
+      refreshData()
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.detail || err?.message || 'Failed to submit change request'
+      setError(msg)
+      toastError(msg, 'Revision Request Error')
+      throw err
     }
   }
 
   const addComment = async (reviewId: string, commentText: string) => {
+    const authorName = user?.name || 'Reviewer'
+    const authorRole = currentWorkspace?.role || 'Member'
     const newComment = {
       id: `c-${Date.now()}`,
-      authorName: 'Sarah Chen',
-      authorRole: 'Brand Lead',
-      authorAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80',
+      authorName,
+      authorRole,
+      authorAvatar: `https://api.dicebear.com/7.x/initials/svg?seed=${authorName}`,
       text: commentText,
       timestamp: 'Just now',
     }
@@ -259,8 +267,12 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       )
 
       info('Governance memo added to audit trail.', 'Comment Logged')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add comment')
+      refreshData()
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.detail || err?.message || 'Failed to add comment'
+      setError(msg)
+      toastError(msg, 'Comment Error')
+      throw err
     }
   }
 
@@ -495,6 +507,7 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       value={{
         isLoading,
         error,
+        refreshData,
         reviews,
         addReview,
         approveContent,
