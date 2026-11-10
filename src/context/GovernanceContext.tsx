@@ -426,11 +426,13 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const uploadDocumentFile = async (file: File) => {
     setIsLoading(true)
     try {
-      const uploadedDoc = await guidelineService.uploadSourceDocument(file)
-      // Refresh documents and pending candidates from backend
-      const [candidatesData, docsData] = await Promise.all([
-        guidelineService.getPendingCandidates(),
-        guidelineService.getSourceDocuments(),
+      const brandId = currentWorkspace?.id
+      const uploadedDoc = await guidelineService.uploadSourceDocument(file, brandId)
+      // Refresh documents, pending candidates, and approved rules from backend
+      const [candidatesData, docsData, rulesData] = await Promise.all([
+        guidelineService.getPendingCandidates(brandId),
+        guidelineService.getSourceDocuments(brandId),
+        guidelineService.getApprovedRules(brandId),
       ])
       if (docsData && docsData.length > 0) {
         setSourceDocuments(docsData as unknown as SourceDocument[])
@@ -439,6 +441,9 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       if (candidatesData) {
         setPendingCandidates(candidatesData as unknown as PendingCandidateRule[])
+      }
+      if (rulesData) {
+        setApprovedRules(rulesData as unknown as ApprovedRule[])
       }
       success(`Document "${file.name}" uploaded and parsed into brand knowledge queue!`, 'File Processed')
     } catch (err) {
@@ -451,8 +456,15 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }
 
   const deleteSourceDocument = async (docId: string) => {
-    setSourceDocuments((prev) => prev.filter((d) => d.id !== docId))
-    info('Source document removed from knowledge index.', 'Document Removed')
+    try {
+      if (!apiClient.isMockMode()) {
+        await apiClient.delete(`/api/v1/guidelines/${docId}`)
+      }
+      setSourceDocuments((prev) => prev.filter((d) => d.id !== docId))
+      info('Source document removed from knowledge index.', 'Document Removed')
+    } catch (err: any) {
+      toastError(err?.detail || err?.message || 'Failed to delete document', 'Delete Failed')
+    }
   }
 
   // Derived Telemetry

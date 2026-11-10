@@ -336,7 +336,7 @@ def approve_candidate_rule(
     if not r_obj:
         raise HTTPException(status_code=404, detail="Candidate rule not found")
     verify_workspace_admin_in_compat(db, r_obj.workspace_id, current_user.id)
-    rule = rule_service.approve_rule(db, r_id)
+    rule = rule_service.approve_rule(db, r_obj, reviewer_id=current_user.id)
     return _map_rule_to_guideline(rule, {})
 
 
@@ -355,7 +355,7 @@ def reject_candidate_rule(
     if not r_obj:
         raise HTTPException(status_code=404, detail="Candidate rule not found")
     verify_workspace_admin_in_compat(db, r_obj.workspace_id, current_user.id)
-    rule = rule_service.reject_rule(db, r_id)
+    rule_service.reject_rule(db, r_obj, reviewer_id=current_user.id)
     return {"message": "Candidate rejected", "id": candidate_id}
 
 

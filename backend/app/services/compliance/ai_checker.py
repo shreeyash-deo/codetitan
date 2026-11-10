@@ -182,10 +182,14 @@ class AIChecker:
         if not active_key:
             return ("Automated deterministic brand rules evaluation completed.", [])
 
-        if provider_name == "deepseek":
-            raw_response = cls.call_deepseek(content, content_type, rules_text)
-        else:
-            raw_response = cls.call_gemini(content, content_type, rules_text)
+        try:
+            if provider_name == "deepseek":
+                raw_response = cls.call_deepseek(content, content_type, rules_text)
+            else:
+                raw_response = cls.call_gemini(content, content_type, rules_text)
+        except Exception as exc:
+            # Fallback gracefully to deterministic checks if AI provider is unavailable
+            return (f"AI contextual check unavailable ({str(exc)[:60]}); deterministic compliance checks completed.", [])
 
         # Parse & Validate with Pydantic
         cleaned = raw_response.strip()
@@ -196,14 +200,20 @@ class AIChecker:
 
         try:
             data = json.loads(cleaned)
-        except json.JSONDecodeError as err:
+        except json.JSONDecodeError:
             match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
             if match:
-                data = json.loads(match.group(0))
+                try:
+                    data = json.loads(match.group(0))
+                except Exception:
+                    return ("AI response was not valid JSON; deterministic compliance checks completed.", [])
             else:
-                raise ValueError(f"AI response is not valid JSON: {err}")
+                return ("AI response was not valid JSON; deterministic compliance checks completed.", [])
 
-        parsed_resp = AIComplianceResponse(**data)
+        try:
+            parsed_resp = AIComplianceResponse(**data)
+        except Exception:
+            return ("AI response structure was invalid; deterministic compliance checks completed.", [])
 
         # Build approved rule lookup to verify guideline references
         valid_rule_refs = {f"Rule #{r.id}: {r.title}" for r in approved_rules}

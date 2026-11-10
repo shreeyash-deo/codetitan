@@ -23,6 +23,8 @@ interface FindingCardProps {
   onReject: (findingId: string) => void
   onManualEdit: (findingId: string, customReplacement: string) => void
   onViewGuideline: (finding: StudioFinding) => void
+  isSelected?: boolean
+  onSelect?: (findingId: string) => void
 }
 
 export const FindingCard: React.FC<FindingCardProps> = ({
@@ -31,6 +33,8 @@ export const FindingCard: React.FC<FindingCardProps> = ({
   onReject,
   onManualEdit,
   onViewGuideline,
+  isSelected = false,
+  onSelect,
 }) => {
   const [isEditing, setIsEditing] = useState(false)
   const [editText, setEditText] = useState(finding.manualReplacement || finding.suggestedCorrection)
@@ -49,8 +53,11 @@ export const FindingCard: React.FC<FindingCardProps> = ({
 
   return (
     <div
-      className={`rounded-lg border p-4 transition-all text-xs space-y-3 ${
-        finding.status === 'accepted' || finding.status === 'manual'
+      onClick={() => onSelect?.(finding.id)}
+      className={`rounded-lg border p-4 transition-all text-xs space-y-3 cursor-pointer ${
+        isSelected
+          ? 'ring-2 ring-blue-500 border-blue-500 shadow-md bg-blue-50/20'
+          : finding.status === 'accepted' || finding.status === 'manual'
           ? 'bg-emerald-50/40 border-emerald-200'
           : finding.status === 'rejected'
           ? 'bg-slate-50 border-slate-200 opacity-60'
@@ -184,7 +191,10 @@ export const FindingCard: React.FC<FindingCardProps> = ({
                 variant="outline"
                 size="sm"
                 className="h-7 text-xs text-slate-600 hover:text-rose-600 gap-1"
-                onClick={() => onReject(finding.id)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onReject(finding.id)
+                }}
               >
                 <X className="w-3 h-3" />
                 <span>Reject</span>
@@ -193,10 +203,13 @@ export const FindingCard: React.FC<FindingCardProps> = ({
                 variant="primaryBlue"
                 size="sm"
                 className="h-7 text-xs gap-1 font-semibold"
-                onClick={() => onAccept(finding.id)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onAccept(finding.id)
+                }}
               >
                 <Check className="w-3 h-3" />
-                <span>Accept Suggestion</span>
+                <span>Apply Fix</span>
               </Button>
             </>
           ) : (

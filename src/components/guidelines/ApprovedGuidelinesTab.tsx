@@ -119,14 +119,27 @@ export const ApprovedGuidelinesTab: React.FC<ApprovedGuidelinesTabProps> = ({
         <Card className="p-12 text-center space-y-3">
           <BookOpen className="w-8 h-8 text-slate-300 mx-auto" />
           <p className="text-sm font-semibold text-slate-800">
-            No approved guidelines match your filter
+            {rules.length === 0
+              ? 'No approved brand guidelines in this organisation yet'
+              : 'No approved guidelines match your filter'}
           </p>
-          <p className="text-xs text-slate-500">
-            Try adjusting your search query or select another category.
+          <p className="text-xs text-slate-500 max-w-sm mx-auto">
+            {rules.length === 0
+              ? 'Upload brand guideline manuals (.pdf, .docx) in the Source Documents tab to extract candidate rules, or add custom rules manually.'
+              : 'Try adjusting your search query or select another category.'}
           </p>
-          <Button variant="outline" size="sm" onClick={() => { setSearchQuery(''); setSelectedCategory('all'); }}>
-            Reset Filters
-          </Button>
+          {rules.length === 0 ? (
+            <div className="pt-2">
+              <Button variant="primaryBlue" size="sm" onClick={onAddRule} className="gap-1.5">
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add First Guideline Rule</span>
+              </Button>
+            </div>
+          ) : (
+            <Button variant="outline" size="sm" onClick={() => { setSearchQuery(''); setSelectedCategory('all'); }}>
+              Reset Filters
+            </Button>
+          )}
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

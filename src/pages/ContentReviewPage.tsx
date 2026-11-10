@@ -37,6 +37,9 @@ import {
   RotateCcw,
   CheckCircle2,
   ArrowRight,
+  RefreshCw,
+  Edit3,
+  Eye,
 } from 'lucide-react'
 
 export const ContentReviewPage: React.FC = () => {
@@ -83,6 +86,8 @@ export const ContentReviewPage: React.FC = () => {
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false)
   const [isExportModalOpen, setIsExportModalOpen] = useState(false)
   const [selectedFilterCategory, setSelectedFilterCategory] = useState<string>('all')
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null)
+  const [isDirectEditing, setIsDirectEditing] = useState(false)
 
   // Load Preset
   const handleSelectPreset = (presetId: string) => {
@@ -119,7 +124,7 @@ export const ContentReviewPage: React.FC = () => {
         channel,
         strictness,
         activeCategories,
-      })
+      }, currentWorkspace?.id)
 
       setActiveReviewId(result.id)
       setRealBackendScore(result.overallScore)
@@ -369,6 +374,97 @@ export const ContentReviewPage: React.FC = () => {
     navigate('/team-approvals')
   }
 
+  // Interactive Highlighting Renderer for Document View
+  const renderHighlightedContent = () => {
+    if (!content) return <span className="text-slate-400 italic">No content</span>
+
+    interface Match {
+      start: number
+      end: number
+      finding: StudioFinding
+    }
+    const matches: Match[] = []
+
+    findings.forEach((f) => {
+      if (!f.originalText || f.originalText.trim().length === 0) return
+      let pos = 0
+      while (pos < content.length) {
+        const idx = content.indexOf(f.originalText, pos)
+        if (idx === -1) break
+        matches.push({
+          start: idx,
+          end: idx + f.originalText.length,
+          finding: f,
+        })
+        pos = idx + f.originalText.length
+      }
+    })
+
+    matches.sort((a, b) => a.start - b.start)
+
+    const filteredMatches: Match[] = []
+    let lastEnd = 0
+    for (const m of matches) {
+      if (m.start >= lastEnd) {
+        filteredMatches.push(m)
+        lastEnd = m.end
+      }
+    }
+
+    if (filteredMatches.length === 0) {
+      return <span className="whitespace-pre-wrap">{content}</span>
+    }
+
+    const elements: React.ReactNode[] = []
+    let cursor = 0
+
+    filteredMatches.forEach((m, i) => {
+      if (m.start > cursor) {
+        elements.push(
+          <span key={`text-${cursor}`}>{content.slice(cursor, m.start)}</span>
+        )
+      }
+
+      const isSelected = selectedFindingId === m.finding.id
+      const isResolved = m.finding.status === 'accepted' || m.finding.status === 'manual'
+      const isCritical = m.finding.severity === 'critical'
+
+      elements.push(
+        <mark
+          key={`match-${i}-${m.start}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            setSelectedFindingId(m.finding.id)
+          }}
+          className={`px-1 py-0.5 rounded cursor-pointer transition-all ${
+            isSelected
+              ? 'bg-amber-300 text-amber-950 font-semibold ring-2 ring-blue-500 shadow-sm'
+              : isResolved
+              ? 'bg-emerald-100 text-emerald-900 border border-emerald-300 line-through opacity-70'
+              : isCritical
+              ? 'bg-rose-100 text-rose-900 border border-rose-300 hover:bg-rose-200'
+              : 'bg-amber-100 text-amber-900 border border-amber-200 hover:bg-amber-200'
+          }`}
+          title={`Click to focus: ${m.finding.category} - ${m.finding.explanation}`}
+        >
+          {content.slice(m.start, m.end)}
+        </mark>
+      )
+
+      cursor = m.end
+    })
+
+    if (cursor < content.length) {
+      elements.push(
+        <span key={`text-${cursor}`}>{content.slice(cursor)}</span>
+      )
+    }
+
+    return <span className="whitespace-pre-wrap">{elements}</span>
+  }
+
+  const selectedFinding = findings.find(f => f.id === selectedFindingId)
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -389,6 +485,17 @@ export const ContentReviewPage: React.FC = () => {
         actions={
           studioState === 'results' ? (
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-blue-700 border-blue-200 hover:bg-blue-50"
+                onClick={handleRunReview}
+                disabled={isSubmitting}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSubmitting ? 'animate-spin' : ''}`} />
+                <span>Recheck Content</span>
+              </Button>
+
               <Button
                 variant="outline"
                 size="sm"
@@ -552,22 +659,84 @@ export const ContentReviewPage: React.FC = () => {
                       </CardDescription>
                     </div>
 
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-[11px] gap-1"
-                      onClick={() => setIsCompareModalOpen(true)}
-                    >
-                      <GitCompare className="w-3 h-3" />
-                      <span>Compare Diff</span>
-                    </Button>
+                    <div className="flex items-center gap-1.5">
+                      <div className="flex items-center bg-slate-100 p-0.5 rounded-md text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => setIsDirectEditing(false)}
+                          className={`px-2 py-0.5 rounded flex items-center gap-1 transition-all ${
+                            !isDirectEditing ? 'bg-white text-slate-900 font-semibold shadow-2xs' : 'text-slate-500 hover:text-slate-900'
+                          }`}
+                        >
+                          <Eye className="w-3 h-3 text-blue-600" />
+                          <span>Inspect</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsDirectEditing(true)}
+                          className={`px-2 py-0.5 rounded flex items-center gap-1 transition-all ${
+                            isDirectEditing ? 'bg-white text-slate-900 font-semibold shadow-2xs' : 'text-slate-500 hover:text-slate-900'
+                          }`}
+                        >
+                          <Edit3 className="w-3 h-3 text-slate-600" />
+                          <span>Edit</span>
+                        </button>
+                      </div>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px] gap-1"
+                        onClick={() => setIsCompareModalOpen(true)}
+                      >
+                        <GitCompare className="w-3 h-3" />
+                        <span>Compare Diff</span>
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
 
                 <CardContent className="p-4 space-y-3 flex-1 flex flex-col">
-                  <div className="flex-1 p-3.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-serif leading-relaxed text-slate-800 min-h-[360px] whitespace-pre-wrap select-text">
-                    {content}
-                  </div>
+                  {selectedFinding && selectedFinding.status === 'pending' && (
+                    <div className="p-2.5 rounded-lg bg-blue-50/90 border border-blue-200 flex items-center justify-between gap-2 text-xs">
+                      <div className="min-w-0">
+                        <div className="font-semibold text-blue-900 truncate flex items-center gap-1.5">
+                          <Sparkles className="w-3 h-3 text-blue-600 shrink-0" />
+                          <span>Focused Violation: {selectedFinding.category}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-600 truncate mt-0.5">
+                          <span className="line-through text-rose-600">"{selectedFinding.originalText}"</span> → <strong className="text-emerald-700 font-semibold">"{selectedFinding.suggestedCorrection}"</strong>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="primaryBlue"
+                        className="h-7 text-xs font-semibold shrink-0 gap-1"
+                        onClick={() => handleAcceptSuggestion(selectedFinding.id)}
+                      >
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Apply Fix</span>
+                      </Button>
+                    </div>
+                  )}
+
+                  {!isDirectEditing ? (
+                    <div className="flex-1 p-3.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-serif leading-relaxed text-slate-800 min-h-[360px] whitespace-pre-wrap select-text">
+                      {renderHighlightedContent()}
+                    </div>
+                  ) : (
+                    <div className="flex-1 flex flex-col space-y-2 min-h-[360px]">
+                      <textarea
+                        value={content}
+                        onChange={(e) => setContent(e.target.value)}
+                        className="flex-1 w-full p-3.5 rounded-lg bg-white border border-slate-300 text-xs font-mono leading-relaxed text-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-inner resize-none min-h-[340px]"
+                        placeholder="Edit draft text directly..."
+                      />
+                      <p className="text-[10px] text-slate-400">
+                        Manual edits persist across re-checks and will be scanned against brand rules.
+                      </p>
+                    </div>
+                  )}
 
                   <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-100">
                     <span>{content.length} characters • {content.trim().split(/\s+/).length} words</span>
@@ -635,6 +804,8 @@ export const ContentReviewPage: React.FC = () => {
                   <FindingCard
                     key={finding.id}
                     finding={finding}
+                    isSelected={selectedFindingId === finding.id}
+                    onSelect={(id) => setSelectedFindingId(id)}
                     onAccept={handleAcceptSuggestion}
                     onReject={handleRejectSuggestion}
                     onManualEdit={handleManualEdit}
@@ -660,6 +831,17 @@ export const ContentReviewPage: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-blue-700 border-blue-200 hover:bg-blue-50"
+                    onClick={handleRunReview}
+                    disabled={isSubmitting}
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSubmitting ? 'animate-spin' : ''}`} />
+                    <span>Recheck Content</span>
+                  </Button>
+
                   <Button
                     variant="outline"
                     size="sm"

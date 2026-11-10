@@ -19,7 +19,7 @@ export const reviewService = {
    * Request Payload: ReviewRequest
    * Response: ReviewResult
    */
-  async submitContentForReview(payload: ReviewRequest): Promise<ReviewResult> {
+  async submitContentForReview(payload: ReviewRequest, brandId?: string): Promise<ReviewResult> {
     if (apiClient.isMockMode()) {
       // Simulate realistic latency and deterministic mock result based on preset or text
       const matchingPreset = studioPresets.find(p => p.contentType === payload.contentType) || studioPresets[0]
@@ -48,7 +48,7 @@ export const reviewService = {
         issuesCount: findings.length,
         status: hasCritical ? 'flagged' : 'approved',
         summary: hasCritical
-          ? 'Identified statutory superlatives and terminology discrepancies with NovaPay guidelines.'
+          ? 'Identified statutory superlatives and terminology discrepancies with guidelines.'
           : 'High compliance alignment with active brand guidelines.',
         contentPreview: payload.content.slice(0, 160) + '...',
         findings,
@@ -56,7 +56,12 @@ export const reviewService = {
       }
     }
 
-    return apiClient.post<ReviewResult>('/api/v1/reviews/scan', payload)
+    return apiClient.post<ReviewResult>('/api/v1/reviews/scan', {
+      ...payload,
+      brandId,
+    }, {
+      params: { brand_id: brandId },
+    })
   },
 
   /**
