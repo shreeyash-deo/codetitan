@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.models.rule import BrandRule
 from app.schemas.finding import FindingCreate
-from app.services.ai.base import parse_structured_rules_json
+from app.services.ai.gemini_client import gemini_client, redact_sensitive
 
 
 class AIFindingCandidate(BaseModel):
@@ -76,13 +76,9 @@ class AIChecker:
 
     @classmethod
     def call_gemini(cls, content: str, content_type: str, rules_text: str) -> str:
-        api_key = settings.GEMINI_API_KEY
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY is not configured.")
-
-        model = settings.AI_MODEL or "gemini-2.0-flash"
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-
+        """
+        Invoke centralized GeminiClient to run compliance audit against brand rules.
+        """
         prompt = (
             f"CONTENT TYPE: {content_type}\n\n"
             f"SUBMITTED CONTENT FOR AUDIT:\n\"\"\"\n{content}\n\"\"\"\n\n"
@@ -90,32 +86,11 @@ class AIChecker:
             "Analyze the content against the approved brand rules now. Output strictly valid JSON."
         )
 
-        payload = {
-            "system_instruction": {"parts": [{"text": COMPLIANCE_SYSTEM_PROMPT}]},
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "response_mime_type": "application/json",
-                "temperature": 0.1,
-            },
-        }
-
-        try:
-            with httpx.Client(timeout=45.0) as client:
-                resp = client.post(url, json=payload)
-        except httpx.TimeoutException:
-            raise TimeoutError("Gemini API request timed out after 45 seconds.")
-        except httpx.RequestError as exc:
-            raise RuntimeError(f"Network error communicating with Gemini API: {exc}")
-
-        if resp.status_code != 200:
-            raise RuntimeError(f"Gemini API returned error HTTP {resp.status_code}: {resp.text[:300]}")
-
-        resp_json = resp.json()
-        try:
-            raw_text = resp_json["candidates"][0]["content"]["parts"][0]["text"]
-            return raw_text
-        except (KeyError, IndexError) as err:
-            raise ValueError(f"Unexpected response structure from Gemini API: {err}")
+        return gemini_client.generate_content(
+            prompt=prompt,
+            system_instruction=COMPLIANCE_SYSTEM_PROMPT,
+            response_mime_type="application/json",
+        )
 
     @classmethod
     def call_deepseek(cls, content: str, content_type: str, rules_text: str) -> str:
@@ -144,14 +119,14 @@ class AIChecker:
                 {"role": "user", "content": prompt},
             ],
             "response_format": {"type": "json_object"},
-            "temperature": 0.1,
+            "temperature": settings.AI_TEMPERATURE,
         }
 
         try:
-            with httpx.Client(timeout=45.0) as client:
+            with httpx.Client(timeout=float(settings.AI_TIMEOUT)) as client:
                 resp = client.post(url, json=payload, headers=headers)
         except httpx.TimeoutException:
-            raise TimeoutError("DeepSeek API request timed out after 45 seconds.")
+            raise TimeoutError(f"DeepSeek API request timed out after {settings.AI_TIMEOUT}s.")
         except httpx.RequestError as exc:
             raise RuntimeError(f"Network error communicating with DeepSeek API: {exc}")
 
@@ -172,15 +147,21 @@ class AIChecker:
         """
         Send content and approved brand rules to the configured AI provider.
         Returns (summary, validated_findings).
+        Preserves deterministic fallback findings if AI provider is unconfigured or fails.
         """
         provider_name = (settings.AI_PROVIDER or "gemini").lower().strip()
         rules_text = cls.format_rules_for_prompt(approved_rules)
 
-        # If no AI API key is configured (or in automated test environments),
-        # return deterministic fallback findings gracefully without throwing 502
-        active_key = settings.DEEPSEEK_API_KEY if provider_name == "deepseek" else settings.GEMINI_API_KEY
+        active_key = (
+            settings.DEEPSEEK_API_KEY
+            if provider_name == "deepseek"
+            else settings.active_gemini_api_key
+        )
         if not active_key:
-            return ("Automated deterministic brand rules evaluation completed.", [])
+            return (
+                "AI semantic analysis unavailable (no API key configured); deterministic compliance checks completed.",
+                [],
+            )
 
         try:
             if provider_name == "deepseek":
@@ -189,7 +170,11 @@ class AIChecker:
                 raw_response = cls.call_gemini(content, content_type, rules_text)
         except Exception as exc:
             # Fallback gracefully to deterministic checks if AI provider is unavailable
-            return (f"AI contextual check unavailable ({str(exc)[:60]}); deterministic compliance checks completed.", [])
+            error_snippet = redact_sensitive(str(exc))[:60]
+            return (
+                f"AI semantic analysis unavailable ({error_snippet}); deterministic compliance checks completed.",
+                [],
+            )
 
         # Parse & Validate with Pydantic
         cleaned = raw_response.strip()
@@ -206,17 +191,25 @@ class AIChecker:
                 try:
                     data = json.loads(match.group(0))
                 except Exception:
-                    return ("AI response was not valid JSON; deterministic compliance checks completed.", [])
+                    return (
+                        "AI semantic analysis unavailable (invalid JSON response); deterministic compliance checks completed.",
+                        [],
+                    )
             else:
-                return ("AI response was not valid JSON; deterministic compliance checks completed.", [])
+                return (
+                    "AI semantic analysis unavailable (malformed response); deterministic compliance checks completed.",
+                    [],
+                )
 
         try:
             parsed_resp = AIComplianceResponse(**data)
         except Exception:
-            return ("AI response structure was invalid; deterministic compliance checks completed.", [])
+            return (
+                "AI semantic analysis unavailable (schema validation failed); deterministic compliance checks completed.",
+                [],
+            )
 
         # Build approved rule lookup to verify guideline references
-        valid_rule_refs = {f"Rule #{r.id}: {r.title}" for r in approved_rules}
         rule_id_map = {r.id: r for r in approved_rules}
 
         validated_findings: List[FindingCreate] = []
@@ -236,22 +229,27 @@ class AIChecker:
             if sev not in ("critical", "major", "minor", "suggestion"):
                 sev = "minor"
 
-            # 3. Ensure guideline reference is valid
+            # 3. Grounding enforcement: Verify guideline reference cites an approved rule ID
             ref = candidate.guideline_reference.strip()
-            # If reference lacks Rule ID format, attempt matching to closest rule
             id_match = re.search(r"Rule\s*#?(\d+)", ref)
-            if id_match:
-                r_id = int(id_match.group(1))
-                if r_id in rule_id_map:
-                    ref = f"Rule #{r_id}: {rule_id_map[r_id].title}"
+            if not id_match:
+                # Refuse findings that fail to cite a specific rule ID
+                continue
+
+            r_id = int(id_match.group(1))
+            if r_id not in rule_id_map:
+                # Strictly discard hallucinated rule ID not found in workspace approved rules
+                continue
+
+            canonical_ref = f"Rule #{r_id}: {rule_id_map[r_id].title}"
 
             validated_findings.append(
                 FindingCreate(
                     severity=sev,
-                    category=candidate.category.strip() or "General Brand Governance",
+                    category=candidate.category.strip() or rule_id_map[r_id].category,
                     excerpt=actual_excerpt,
                     explanation=candidate.explanation.strip(),
-                    guideline_reference=ref,
+                    guideline_reference=canonical_ref,
                     suggested_correction=candidate.suggested_correction,
                     confidence=candidate.confidence,
                     status="open",

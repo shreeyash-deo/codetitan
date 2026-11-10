@@ -23,6 +23,14 @@ dist-ssr
 *.sln
 *.sw?
 
+# Environment and secrets
+.env
+.env.*
+backend/.env
+backend/.env.*
+!.env.example
+!backend/.env.example
+
 # Python
 backend/.venv/
 .venv/

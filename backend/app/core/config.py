@@ -33,8 +33,30 @@ class Settings(BaseSettings):
     # AI Provider Configuration
     AI_PROVIDER: str = "gemini"  # "gemini" or "deepseek"
     AI_MODEL: str = ""
+    GEMINI_MODEL: str = "gemini-2.0-flash"
     GEMINI_API_KEY: str = ""
+    GOOGLE_API_KEY: str = ""
     DEEPSEEK_API_KEY: str = ""
+    AI_TEMPERATURE: float = 0.2
+    AI_TIMEOUT: int = 45
+    AI_MAX_RETRIES: int = 2
+
+    @property
+    def active_gemini_api_key(self) -> str:
+        """
+        Precedence: GEMINI_API_KEY is preferred for BrandShield.
+        GOOGLE_API_KEY is supported as an optional alternative.
+        """
+        return (self.GEMINI_API_KEY or self.GOOGLE_API_KEY or "").strip()
+
+    @property
+    def active_gemini_model(self) -> str:
+        """
+        Precedence: GEMINI_MODEL is preferred.
+        AI_MODEL is supported as fallback.
+        Defaults to 'gemini-2.0-flash' if neither is set.
+        """
+        return (self.GEMINI_MODEL or self.AI_MODEL or "gemini-2.0-flash").strip()
 
     model_config = SettingsConfigDict(
         env_file=(
