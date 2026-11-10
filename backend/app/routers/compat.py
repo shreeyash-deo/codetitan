@@ -49,10 +49,15 @@ def get_target_workspace_id(db: Session, current_user: User, explicit_id: Option
             )
         return ws.id
 
-    # Find first workspace user belongs to
+    # If user belongs to exactly one workspace, use it
     workspaces = workspace_service.list_workspaces_for_user(db, current_user)
-    if workspaces:
+    if len(workspaces) == 1:
         return workspaces[0].id
+    if len(workspaces) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ambiguous organisation context. User belongs to multiple organisations; please specify brand_id.",
+        )
 
     # If user has no workspace yet, create a default workspace
     default_ws = Workspace(name="NovaPay Global", org_id=workspace_service.generate_org_id(db))
@@ -101,6 +106,7 @@ def list_brands(
     results = []
     for w in workspaces:
         stats = dashboard_service.get_dashboard_stats(db, w.id)
+        member = workspace_service.get_member(db, w.id, current_user.id)
         results.append({
             "id": str(w.id),
             "org_id": w.org_id,
@@ -108,6 +114,7 @@ def list_brands(
             "name": w.name,
             "slug": w.name.lower().replace(" ", "-"),
             "plan": "Enterprise",
+            "role": member.role if member else "Employee",
             "complianceScore": int(stats.average_compliance_score),
             "activeRulesCount": stats.total_approved_brand_rules,
             "brandColor": "#0284c7",
@@ -127,6 +134,7 @@ def get_brand(
     if not w:
         raise HTTPException(status_code=404, detail="Brand not found")
     stats = dashboard_service.get_dashboard_stats(db, w.id)
+    member = workspace_service.get_member(db, w.id, current_user.id)
     return {
         "id": str(w.id),
         "org_id": w.org_id,
@@ -134,6 +142,7 @@ def get_brand(
         "name": w.name,
         "slug": w.name.lower().replace(" ", "-"),
         "plan": "Enterprise",
+        "role": member.role if member else "Employee",
         "complianceScore": int(stats.average_compliance_score),
         "activeRulesCount": stats.total_approved_brand_rules,
         "brandColor": "#0284c7",

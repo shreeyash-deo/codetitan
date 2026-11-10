@@ -444,7 +444,7 @@ export const ContentReviewPage: React.FC = () => {
               setContentType={setContentType}
               content={content}
               setContent={setContent}
-              workspaceName={currentWorkspace.name}
+              workspaceName={currentWorkspace?.name || 'Organisation'}
               onRunReview={handleRunReview}
               isAnalyzing={isSubmitting}
               onSelectPreset={handleSelectPreset}
@@ -489,7 +489,7 @@ export const ContentReviewPage: React.FC = () => {
                     {contentType}
                   </Badge>
                   <span className="text-xs text-slate-400">
-                    Audit complete for {currentWorkspace.name}
+                    Audit complete for {currentWorkspace?.name || 'Organisation'}
                   </span>
                 </div>
                 <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white">

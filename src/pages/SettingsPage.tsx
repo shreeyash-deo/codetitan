@@ -158,11 +158,11 @@ export const SettingsPage: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-700">Workspace Brand Name</label>
-                  <Input defaultValue={currentWorkspace.name} />
+                  <Input defaultValue={currentWorkspace?.name || ''} />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-700">Organization Slug</label>
-                  <Input defaultValue={currentWorkspace.slug} />
+                  <Input defaultValue={currentWorkspace?.slug || ''} />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-700">Primary Brand Domain</label>
@@ -181,7 +181,7 @@ export const SettingsPage: React.FC = () => {
               </div>
 
               <div className="pt-3 border-t border-border flex items-center justify-between text-xs text-slate-500">
-                <span>Active Subscription Tier: <strong className="text-slate-800">{currentWorkspace.plan}</strong></span>
+                <span>Active Subscription Tier: <strong className="text-slate-800">{currentWorkspace?.plan || 'Enterprise'}</strong></span>
                 <Badge variant="blue">Enterprise SLA Active</Badge>
               </div>
             </CardContent>

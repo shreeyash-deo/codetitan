@@ -67,7 +67,7 @@ export const Header: React.FC<HeaderProps> = ({ onMobileMenuToggle }) => {
             className="hover:text-slate-900 transition-colors flex items-center gap-1 font-medium truncate"
           >
             <Shield className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-            <span className="hidden sm:inline">{currentWorkspace.name}</span>
+            <span className="hidden sm:inline">{currentWorkspace?.name || 'Organisation'}</span>
           </Link>
 
           <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />

@@ -59,8 +59,14 @@ export const historyService = {
       }))
     }
 
+    const queryParams: Record<string, any> = { ...(params || {}) }
+    if (queryParams.brandId && !queryParams.brand_id) {
+      queryParams.brand_id = queryParams.brandId
+      delete queryParams.brandId
+    }
+
     return apiClient.get<ReviewHistory[]>('/api/v1/history', {
-      params: params as Record<string, string | number | boolean | undefined>,
+      params: queryParams,
     })
   },
 

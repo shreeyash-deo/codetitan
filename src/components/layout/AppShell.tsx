@@ -3,9 +3,15 @@ import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
 import { useSidebar } from '@/hooks/useSidebar'
-import { X } from 'lucide-react'
+import { useAuth } from '@/context/AuthContext'
+import { useWorkspace } from '@/hooks/useWorkspace'
+import { AuthPage } from '@/components/auth/AuthPage'
+import { WorkspaceSelectorView } from '@/components/workspace/WorkspaceSelectorView'
+import { X, Loader2, Shield } from 'lucide-react'
 
 export const AppShell: React.FC = () => {
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth()
+  const { currentWorkspace, isLoading: wsLoading } = useWorkspace()
   const {
     collapsed,
     toggleSidebar,
@@ -14,6 +20,44 @@ export const AppShell: React.FC = () => {
     closeMobile,
   } = useSidebar()
 
+  // 1. Initial Session Restoration Loading State
+  if (authLoading) {
+    return (
+      <div className="min-h-screen w-screen bg-[#070C14] flex flex-col items-center justify-center text-slate-100 select-none">
+        <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-blue-400 mb-3 animate-pulse">
+          <Shield className="w-8 h-8" />
+        </div>
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+          <span>Restoring BrandShield session...</span>
+        </div>
+      </div>
+    )
+  }
+
+  // 2. Unauthenticated: Show BrandShield Auth Page
+  if (!isAuthenticated || !user) {
+    return <AuthPage />
+  }
+
+  // 3. Workspace Loading State
+  if (wsLoading) {
+    return (
+      <div className="min-h-screen w-screen bg-[#070C14] flex flex-col items-center justify-center text-slate-100 select-none">
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+          <span>Loading organisations...</span>
+        </div>
+      </div>
+    )
+  }
+
+  // 4. No organisation or multiple organisations with none selected
+  if (!currentWorkspace) {
+    return <WorkspaceSelectorView />
+  }
+
+  // 5. Full Authenticated Application Shell
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background">
       {/* Desktop Sidebar */}
@@ -58,9 +102,7 @@ export const AppShell: React.FC = () => {
         <Header onMobileMenuToggle={toggleMobile} />
 
         <main className="flex-1 overflow-y-auto">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <Outlet />
-          </div>
+          <Outlet />
         </main>
       </div>
     </div>

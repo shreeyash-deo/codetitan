@@ -265,3 +265,22 @@ def test_sec05_unauthorized_or_invalid_brand_id_never_falls_back(client, org_set
     # 6. Valid authorised workspace ID succeeds as expected
     res_auth = client.get(f"/api/history?brand_id={org_setup['ws_a'].id}", headers=headers_a)
     assert res_auth.status_code == 200
+
+
+def test_sec05_multiple_workspaces_require_explicit_brand_id(client, org_setup, db):
+    """When a user belongs to multiple organisations, omitting brand_id must return 400 Ambiguous."""
+    user = org_setup["user_a_admin"]
+    # Add user to Org B as well so they belong to two workspaces
+    db.add(WorkspaceMember(workspace_id=org_setup["ws_b"].id, user_id=user.id, role="Reviewer"))
+    db.commit()
+
+    headers = _headers_for(user)
+    # Calling /api/history without brand_id should now reject with 400 Ambiguous
+    res = client.get("/api/history", headers=headers)
+    assert res.status_code == 400
+    assert "Ambiguous organisation context" in res.json()["detail"]
+
+    # When explicit brand_id is provided, it succeeds
+    res_explicit = client.get(f"/api/history?brand_id={org_setup['ws_a'].id}", headers=headers)
+    assert res_explicit.status_code == 200
+

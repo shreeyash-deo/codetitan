@@ -11,11 +11,16 @@
 
 import { apiClient } from './apiClient'
 import type { UserProfile } from '@/types/user'
-import { mockUser } from '@/data/mockUser'
 
 export interface LoginCredentials {
   email: string
-  password?: string
+  password: string
+}
+
+export interface RegisterData {
+  name: string
+  email: string
+  password: string
 }
 
 export interface AuthTokenResponse {
@@ -31,20 +36,11 @@ export const authService = {
    * FastAPI Route: POST /api/v1/auth/login
    */
   async login(credentials: LoginCredentials): Promise<AuthTokenResponse> {
-    if (apiClient.isMockMode()) {
-      return {
-        access_token: 'mock_jwt_token_sarah_chen',
-        token_type: 'bearer',
-        expires_in: 86400,
-        user: mockUser,
-      }
-    }
-
     const tokenRes = await apiClient.post<{ access_token: string; token_type: string; expires_in: number }>(
       '/api/v1/auth/login',
       {
-        email: credentials.email,
-        password: credentials.password || 'Password123!',
+        email: credentials.email.trim(),
+        password: credentials.password,
       }
     )
 
@@ -52,20 +48,14 @@ export const authService = {
       localStorage.setItem('brandshield_auth_token', tokenRes.access_token)
     }
 
-    let user: UserProfile = mockUser
-    try {
-      const userRes = await apiClient.get<any>('/api/v1/auth/me')
-      user = {
-        id: String(userRes.id),
-        name: userRes.name,
-        email: userRes.email,
-        role: (userRes.role as any) || 'Admin',
-        avatarUrl: mockUser.avatarUrl,
-        status: 'online',
-        pendingReviewsCount: 0,
-      }
-    } catch {
-      // Keep fallback profile if me fails
+    const userRes = await apiClient.get<any>('/api/v1/auth/me')
+    const user: UserProfile = {
+      id: String(userRes.id),
+      name: userRes.name,
+      email: userRes.email,
+      role: userRes.role || 'User',
+      status: 'online',
+      pendingReviewsCount: 0,
     }
 
     return {
@@ -78,53 +68,29 @@ export const authService = {
    * Register a new user and log them in
    * FastAPI Route: POST /api/v1/auth/register
    */
-  async register(userData: { name: string; email: string; password: string; role?: string }): Promise<UserProfile> {
-    if (apiClient.isMockMode()) {
-      return mockUser
-    }
+  async register(userData: RegisterData): Promise<UserProfile> {
+    await apiClient.post<any>('/api/v1/auth/register', {
+      name: userData.name.trim(),
+      email: userData.email.trim(),
+      password: userData.password,
+    })
 
-    const created = await apiClient.post<any>('/api/v1/auth/register', userData)
-    await this.login({ email: userData.email, password: userData.password })
-    return {
-      id: String(created.id),
-      name: created.name,
-      email: created.email,
-      role: (created.role as any) || 'Admin',
-      avatarUrl: mockUser.avatarUrl,
-      status: 'online',
-      pendingReviewsCount: 0,
-    }
+    const loginRes = await this.login({
+      email: userData.email.trim(),
+      password: userData.password,
+    })
+
+    return loginRes.user
   },
 
   /**
    * Get current authenticated user profile
    * FastAPI Route: GET /api/v1/auth/me
    */
-  async getCurrentUser(): Promise<UserProfile> {
-    if (apiClient.isMockMode()) {
-      return mockUser
-    }
-
-    const token = localStorage.getItem('brandshield_auth_token')
+  async getCurrentUser(): Promise<UserProfile | null> {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('brandshield_auth_token') : null
     if (!token) {
-      // Seamless onboarding for development / evaluator
-      try {
-        const res = await this.login({ email: 'sarah.chen@novapay.io', password: 'Password123!' })
-        return res.user
-      } catch {
-        // If sarah.chen does not exist yet, register her
-        try {
-          const registered = await this.register({
-            name: 'Sarah Chen',
-            email: 'sarah.chen@novapay.io',
-            password: 'Password123!',
-            role: 'Admin',
-          })
-          return registered
-        } catch {
-          return mockUser
-        }
-      }
+      return null
     }
 
     try {
@@ -133,19 +99,14 @@ export const authService = {
         id: String(userRes.id),
         name: userRes.name,
         email: userRes.email,
-        role: (userRes.role as any) || 'Admin',
-        avatarUrl: mockUser.avatarUrl,
+        role: userRes.role || 'User',
         status: 'online',
         pendingReviewsCount: 0,
       }
     } catch {
-      // Re-login if expired
-      try {
-        const res = await this.login({ email: 'sarah.chen@novapay.io', password: 'Password123!' })
-        return res.user
-      } catch {
-        return mockUser
-      }
+      // Invalid or expired token: clear local state and return null
+      localStorage.removeItem('brandshield_auth_token')
+      return null
     }
   },
 
@@ -155,12 +116,11 @@ export const authService = {
    */
   async logout(): Promise<void> {
     localStorage.removeItem('brandshield_auth_token')
-    if (!apiClient.isMockMode()) {
-      try {
-        await apiClient.post('/api/v1/auth/logout')
-      } catch {
-        // Silently clear local session
-      }
+    localStorage.removeItem('brandshield_active_workspace_id')
+    try {
+      await apiClient.post('/api/v1/auth/logout')
+    } catch {
+      // Silently clear local session
     }
   },
 }

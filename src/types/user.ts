@@ -3,7 +3,7 @@ export interface UserProfile {
   name: string
   email: string
   avatarUrl?: string
-  role: 'Brand Lead' | 'Compliance Reviewer' | 'Content Creator' | 'Admin'
+  role: string
   status: 'online' | 'busy' | 'offline'
   pendingReviewsCount: number
 }

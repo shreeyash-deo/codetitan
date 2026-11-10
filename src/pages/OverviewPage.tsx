@@ -158,7 +158,7 @@ export const OverviewPage: React.FC = () => {
   }
 
   const handleExportAudit = () => {
-    success(`Official quarterly governance audit report for ${currentWorkspace.name} downloaded.`, 'Audit Exported')
+    success(`Official quarterly governance audit report for ${currentWorkspace?.name || 'Organisation'} downloaded.`, 'Audit Exported')
   }
 
   return (
@@ -178,11 +178,11 @@ export const OverviewPage: React.FC = () => {
             <span className="text-slate-300">•</span>
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-semibold">
               <Shield className="w-3 h-3 text-blue-600" />
-              <span>{currentWorkspace.name}</span>
+              <span>{currentWorkspace?.name || 'Organisation'}</span>
             </div>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
-            Good afternoon, {currentWorkspace.name}
+            Good afternoon, {currentWorkspace?.name || 'Organisation'}
           </h1>
           <p className="text-xs sm:text-sm text-slate-500">
             Here's an overview of your brand health.

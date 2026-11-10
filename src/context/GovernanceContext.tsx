@@ -20,6 +20,7 @@ import {
   initialSourceDocuments,
 } from '@/data/mockKnowledgeBase'
 import { useToast } from './ToastContext'
+import { useWorkspace } from '@/hooks/useWorkspace'
 
 interface GovernanceContextValue {
   // Loading & error state
@@ -63,6 +64,7 @@ const GovernanceContext = createContext<GovernanceContextValue | undefined>(unde
 
 export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { success, info, warning, error: toastError } = useToast()
+  const { currentWorkspace } = useWorkspace()
 
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
@@ -89,18 +91,25 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     const loadInitialData = async () => {
       if (apiClient.isMockMode()) return
+      if (!currentWorkspace) {
+        setApprovedRules([])
+        setPendingCandidates([])
+        setSourceDocuments([])
+        setReviews([])
+        setIsLoading(false)
+        return
+      }
 
       setIsLoading(true)
       setError(null)
       try {
-        // Authenticate evaluator / default user
-        await authService.getCurrentUser()
+        const brandId = currentWorkspace.id
 
         const [rulesData, candidatesData, docsData, historyData] = await Promise.all([
-          guidelineService.getApprovedRules(),
-          guidelineService.getPendingCandidates(),
-          guidelineService.getSourceDocuments(),
-          historyService.getReviewHistory(),
+          guidelineService.getApprovedRules(brandId),
+          guidelineService.getPendingCandidates(brandId),
+          guidelineService.getSourceDocuments(brandId),
+          historyService.getReviewHistory({ brandId }),
         ])
 
         if (isMounted) {
@@ -132,7 +141,7 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [currentWorkspace?.id])
 
   // Review Actions
   const addReview = (newReview: HistoricalReviewRecord) => {
@@ -259,7 +268,7 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const addApprovedRule = async (rule: ApprovedRule) => {
     try {
       if (!apiClient.isMockMode()) {
-        await guidelineService.createApprovedRule(rule as any)
+        await guidelineService.createApprovedRule(rule as any, currentWorkspace?.id)
       }
       setApprovedRules((prev) => [rule, ...prev])
       success(`Rule "${rule.code}: ${rule.title}" added to active brand knowledge.`, 'Rule Created')

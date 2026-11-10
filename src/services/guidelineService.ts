@@ -64,7 +64,7 @@ export const guidelineService = {
    * Create a new approved guideline rule
    * FastAPI Route: POST /api/v1/guidelines/rules
    */
-  async createApprovedRule(payload: Omit<BrandGuideline, 'id'>): Promise<BrandGuideline> {
+  async createApprovedRule(payload: Omit<BrandGuideline, 'id'>, brandId?: string): Promise<BrandGuideline> {
     if (apiClient.isMockMode()) {
       return {
         ...payload,
@@ -72,7 +72,9 @@ export const guidelineService = {
       }
     }
 
-    return apiClient.post<BrandGuideline>('/api/v1/guidelines/rules', payload)
+    return apiClient.post<BrandGuideline>('/api/v1/guidelines/rules', payload, {
+      params: { brand_id: brandId },
+    })
   },
 
   /**
@@ -194,7 +196,7 @@ export const guidelineService = {
    * Upload PDF/DOCX and trigger asynchronous AI knowledge extraction
    * FastAPI Route: POST /api/v1/guidelines/documents/upload (multipart/form-data)
    */
-  async uploadSourceDocument(file: File): Promise<SourceDocument> {
+  async uploadSourceDocument(file: File, brandId?: string): Promise<SourceDocument> {
     if (apiClient.isMockMode()) {
       return {
         id: `doc-${Date.now()}`,
@@ -203,7 +205,7 @@ export const guidelineService = {
         size: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
         pages: 18,
         uploadedAt: 'Today',
-        uploadedBy: 'Sarah Chen (Brand Lead)',
+        uploadedBy: 'Verified User',
         status: 'extracted',
         extractedCandidatesCount: 2,
         approvedRulesCount: 0,
@@ -212,7 +214,12 @@ export const guidelineService = {
 
     const formData = new FormData()
     formData.append('file', file)
+    if (brandId) {
+      formData.append('brand_id', brandId)
+    }
 
-    return apiClient.upload<SourceDocument>('/api/v1/guidelines/documents/upload', formData)
+    return apiClient.upload<SourceDocument>('/api/v1/guidelines/documents/upload', formData, {
+      params: { brand_id: brandId },
+    })
   },
 }
