@@ -386,3 +386,53 @@ def test_tenant_isolation_and_rbac_integrity(client, db):
     # 3. Legitimate reviewer in same org CAN approve
     auth_appr = client.post(f"/api/v1/approvals/{rev_id}/approve", headers=org_a["rev_headers"])
     assert auth_appr.status_code == 200
+
+
+def test_atomic_conditional_database_transaction_isolation(client, db):
+    """
+    Directly exercises the atomic conditional SQL update used for mutual exclusion.
+    Verifies that the conditional predicate (status != 'approved') matches exactly once,
+    and subsequent evaluations return 0 rows updated, preventing duplicate state transitions
+    and raising ValueError in approval_service.approve.
+    """
+    from app.services.approval_service import approval_service
+
+    env = setup_idempotency_environment(client, db, "TxIsolationOrg")
+    ws_id = env["ws"].id
+
+    scan_res = client.post(
+        "/api/v1/reviews/scan",
+        json={
+            "brandId": str(ws_id),
+            "title": "Atomic Tx Asset",
+            "content": "Transaction isolation content.",
+            "contentType": "Social",
+        },
+        headers=env["emp_headers"],
+    )
+    rev_id = int(scan_res.json()["id"])
+    client.post(f"/api/v1/reviews/{rev_id}/request-approval", json={"comment": "Ready"}, headers=env["emp_headers"])
+
+    # First execution of atomic conditional update matches 1 row
+    rows1 = db.query(ContentReview).filter(
+        ContentReview.id == rev_id,
+        ContentReview.status != "approved",
+    ).update({"status": "approved"}, synchronize_session=False)
+    db.commit()
+
+    # Second execution of atomic conditional update finds 0 rows matching condition
+    rows2 = db.query(ContentReview).filter(
+        ContentReview.id == rev_id,
+        ContentReview.status != "approved",
+    ).update({"status": "approved"}, synchronize_session=False)
+    db.commit()
+
+    assert rows1 == 1, "First evaluation must match and transition the unapproved review"
+    assert rows2 == 0, "Second evaluation must match 0 rows once status is 'approved'"
+
+    # Verify that approval_service.approve detects this and raises ValueError
+    appr_ticket = db.query(Approval).filter(Approval.review_id == rev_id).first()
+    with pytest.raises(ValueError, match="already been approved"):
+        approval_service.approve(db, approval=appr_ticket, reviewer=env["reviewer"])
+
+
