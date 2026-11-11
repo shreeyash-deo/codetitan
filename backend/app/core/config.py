@@ -42,31 +42,42 @@ class Settings(BaseSettings):
     AI_TIMEOUT: int = 45
     AI_MAX_RETRIES: int = 2
 
+    @classmethod
+    def _normalize_pg_scheme(cls, raw_url: str) -> str:
+        """
+        Safely normalize PostgreSQL connection schemes for SQLAlchemy 2.
+        - Converts legacy postgres:// to postgresql://
+        - If bare postgresql:// is provided without an explicit driver (+psycopg2, etc.)
+          and psycopg (v3) is not installed in the environment, routes to +psycopg2
+          to ensure compatibility with psycopg2-binary.
+        - Preserves postgresql+psycopg2://, postgresql+psycopg://, sqlite:///, etc.
+        """
+        url = (raw_url or "").strip()
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        if url.startswith("postgresql://"):
+            try:
+                import psycopg  # noqa: F401
+            except ImportError:
+                url = "postgresql+psycopg2://" + url[len("postgresql://"):]
+        return url
+
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def normalize_database_url_input(cls, v: str) -> str:
         """
-        Safely normalize legacy postgres:// connection schemes to postgresql://.
-        Supports postgresql://, postgresql+psycopg2://, sqlite:///, etc.
+        Safely normalize database URL inputs on model instantiation.
         """
         if isinstance(v, str):
-            v_stripped = v.strip()
-            if v_stripped.startswith("postgres://"):
-                return "postgresql://" + v_stripped[len("postgres://"):]
-            return v_stripped
+            return cls._normalize_pg_scheme(v)
         return v
 
     @property
     def normalized_database_url(self) -> str:
         """
         Ensures a normalized database URL compatible with SQLAlchemy 2 and Alembic.
-        Converts legacy postgres:// to postgresql://.
-        Preserves postgresql://, postgresql+psycopg2://, sqlite:///, etc.
         """
-        url = (self.DATABASE_URL or "").strip()
-        if url.startswith("postgres://"):
-            return "postgresql://" + url[len("postgres://"):]
-        return url
+        return self._normalize_pg_scheme(self.DATABASE_URL)
 
     @property
     def safe_database_info(self) -> str:
