@@ -29,14 +29,15 @@ import {
 type TabType = 'overview' | 'approved' | 'pending' | 'documents'
 
 export const BrandGuidelinesPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<TabType>('overview')
   const { user } = useAuth()
   const { currentWorkspace } = useWorkspace()
 
   const userRole = currentWorkspace?.role ? currentWorkspace.role.toLowerCase() : 'unknown'
   const isAdmin = userRole === 'admin'
   const isReviewer = userRole === 'reviewer'
-  const isEmployee = userRole === 'employee'
+  const isEmployee = userRole === 'employee' || userRole === 'editor'
+
+  const [activeTab, setActiveTab] = useState<TabType>(isEmployee ? 'approved' : 'overview')
 
   const {
     approvedRules,
@@ -105,8 +106,12 @@ export const BrandGuidelinesPage: React.FC = () => {
     >
       {/* Page Header */}
       <PageHeader
-        title="Brand Knowledge Management"
-        description="Hybrid governance engine: AI extracts candidate guidelines from source files, requiring authorized human approval before becoming official brand law."
+        title={isEmployee ? "Brand Guidelines & Rules" : "Brand Knowledge Management"}
+        description={
+          isEmployee
+            ? "Official brand standards, tone of voice, terminology, and compliance rules to follow when authoring content."
+            : "Hybrid governance engine: AI extracts candidate guidelines from source files, requiring authorized human approval before becoming official brand law."
+        }
         badge={
           <Badge variant="blue" className="gap-1 font-mono">
             <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
@@ -149,14 +154,16 @@ export const BrandGuidelinesPage: React.FC = () => {
         <div className="rounded-xl border border-blue-200/80 bg-blue-50/60 p-4 text-xs text-blue-900 flex items-center justify-between shadow-2xs">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
-              <ShieldAlert className="w-4 h-4 text-blue-700" />
+              <BookOpen className="w-4 h-4 text-blue-700" />
             </div>
             <div>
               <p className="font-semibold text-slate-900">
-                {isReviewer ? 'Reviewer Access (Read-Only Knowledge Studio)' : isEmployee ? 'Employee Access (Read-Only Knowledge Studio)' : 'Restricted Access (Membership Unresolved)'}
+                {isEmployee ? 'Authoritative Brand Guidelines Reference' : 'Reviewer Knowledge Access'}
               </p>
               <p className="text-slate-600 mt-0.5">
-                You can browse approved brand guidelines and reference source documents. Uploading manuals, editing brand laws, and approving candidate rules require Workspace Administrator privileges.
+                {isEmployee
+                  ? 'Browse official approved brand rules, required phrasing, and terminology to keep in mind when authoring marketing copy.'
+                  : 'You can browse approved brand guidelines and reference source documents. Uploading manuals, editing brand laws, and approving candidate rules require Workspace Administrator privileges.'}
               </p>
             </div>
           </div>
@@ -166,69 +173,71 @@ export const BrandGuidelinesPage: React.FC = () => {
         </div>
       )}
 
-      {/* Main Tabs Navigation */}
-      <div className="flex items-center gap-2 border-b border-border">
-        <button
-          onClick={() => setActiveTab('overview')}
-          className={`pb-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all ${
-            activeTab === 'overview'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
-          }`}
-        >
-          <BookOpen className="w-3.5 h-3.5" />
-          <span>Overview</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('approved')}
-          className={`pb-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all ${
-            activeTab === 'approved'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
-          }`}
-        >
-          <CheckCircle2 className="w-3.5 h-3.5" />
-          <span>Approved Guidelines</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-700">
-            {approvedRules.length}
-          </span>
-        </button>
-
-        {isAdmin && (
+      {/* Main Tabs Navigation - hidden for Employee who only needs approved guidelines */}
+      {!isEmployee && (
+        <div className="flex items-center gap-2 border-b border-border">
           <button
-            onClick={() => setActiveTab('pending')}
-            className={`pb-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all relative ${
-              activeTab === 'pending'
-                ? 'border-amber-600 text-amber-700'
+            onClick={() => setActiveTab('overview')}
+            className={`pb-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all ${
+              activeTab === 'overview'
+                ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
             }`}
           >
-            <Clock className="w-3.5 h-3.5 text-amber-600" />
-            <span>Pending AI Extraction</span>
-            {pendingCandidates.length > 0 && (
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 font-bold">
-                {pendingCandidates.length}
-              </span>
-            )}
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>Overview</span>
           </button>
-        )}
 
-        <button
-          onClick={() => setActiveTab('documents')}
-          className={`pb-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all ${
-            activeTab === 'documents'
-              ? 'border-blue-600 text-blue-600'
-              : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
-          }`}
-        >
-          <FileText className="w-3.5 h-3.5" />
-          <span>Source Documents</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-700">
-            {sourceDocuments.length}
-          </span>
-        </button>
-      </div>
+          <button
+            onClick={() => setActiveTab('approved')}
+            className={`pb-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all ${
+              activeTab === 'approved'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>Approved Guidelines</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-700">
+              {approvedRules.length}
+            </span>
+          </button>
+
+          {isAdmin && (
+            <button
+              onClick={() => setActiveTab('pending')}
+              className={`pb-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all relative ${
+                activeTab === 'pending'
+                  ? 'border-amber-600 text-amber-700'
+                  : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-600" />
+              <span>Pending AI Extraction</span>
+              {pendingCandidates.length > 0 && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 font-bold">
+                  {pendingCandidates.length}
+                </span>
+              )}
+            </button>
+          )}
+
+          <button
+            onClick={() => setActiveTab('documents')}
+            className={`pb-3 px-3 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all ${
+              activeTab === 'documents'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>Source Documents</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-700">
+              {sourceDocuments.length}
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* Tab 1: Overview */}
       {activeTab === 'overview' && (

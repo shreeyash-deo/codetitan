@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import type { ReviewItem } from '@/types/review'
+import { useWorkspace } from '@/hooks/useWorkspace'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -22,6 +23,7 @@ interface ReviewDetailsDrawerProps {
   isOpen: boolean
   onClose: () => void
   onStatusChange?: (reviewId: string, newStatus: ReviewItem['status']) => void
+  userRole?: string
 }
 
 export const ReviewDetailsDrawer: React.FC<ReviewDetailsDrawerProps> = ({
@@ -29,7 +31,12 @@ export const ReviewDetailsDrawer: React.FC<ReviewDetailsDrawerProps> = ({
   isOpen,
   onClose,
   onStatusChange,
+  userRole: propUserRole,
 }) => {
+  const { currentWorkspace } = useWorkspace()
+  const effectiveRole = (propUserRole ?? currentWorkspace?.role ?? '').trim().toLowerCase()
+  const isReviewerOrAdmin = ['admin', 'reviewer'].includes(effectiveRole)
+
   const [appliedIssues, setAppliedIssues] = useState<Record<string, boolean>>({})
 
   if (!isOpen || !review) return null
@@ -49,104 +56,96 @@ export const ReviewDetailsDrawer: React.FC<ReviewDetailsDrawerProps> = ({
         onClick={onClose}
       />
 
-      {/* Slide-over panel */}
-      <div className="fixed inset-y-0 right-0 flex max-w-full pl-10">
-        <div className="w-screen max-w-xl bg-white shadow-2xl flex flex-col border-l border-border animate-in slide-in-from-right duration-200">
+      <div className="fixed inset-y-0 right-0 max-w-full flex pl-10">
+        <div className="w-screen max-w-xl bg-white shadow-2xl border-l border-border flex flex-col">
           {/* Header */}
-          <div className="p-5 border-b border-border flex items-start justify-between bg-slate-50/70">
-            <div className="space-y-1.5 pr-4">
-              <div className="flex items-center gap-2 flex-wrap">
-                <StatusBadge status={review.status} />
-                <Badge variant="outline" className="text-[10px]">
-                  {review.contentType}
-                </Badge>
-                <span className="text-xs text-slate-400 font-mono">
-                  ID: {review.id}
+          <div className="p-5 border-b border-border bg-slate-50/50 flex items-start justify-between gap-4">
+            <div className="space-y-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  {review.channel} • {review.contentType}
                 </span>
+                <StatusBadge status={review.status} />
               </div>
-              <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-snug">
+              <h2 className="text-lg font-bold text-slate-900 truncate">
                 {review.title}
               </h2>
+              <div className="flex items-center gap-2 text-xs text-slate-500 pt-0.5">
+                <Avatar className="w-4 h-4">
+                  {review.author.avatar && <AvatarImage src={review.author.avatar} />}
+                  <AvatarFallback className="text-[8px]">
+                    {review.author.name.charAt(0)}
+                  </AvatarFallback>
+                </Avatar>
+                <span>{review.author.name}</span>
+                <span>•</span>
+                <span>{review.submittedAt || review.date}</span>
+              </div>
             </div>
 
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-slate-400 hover:text-slate-600 rounded-lg shrink-0"
               onClick={onClose}
-              className="p-1.5 rounded-md text-slate-400 hover:text-slate-800 hover:bg-slate-200/60 transition-colors"
-              aria-label="Close drawer"
             >
-              <X className="w-5 h-5" />
-            </button>
+              <X className="w-4 h-4" />
+            </Button>
           </div>
 
-          {/* Body Content */}
+          {/* Drawer Body */}
           <div className="flex-1 overflow-y-auto p-5 space-y-6">
-            {/* Metadata Bar */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-3 rounded-lg bg-slate-50 border border-slate-100 text-xs">
+            {/* Score & Summary Banner */}
+            <div className="p-4 rounded-xl bg-gradient-to-r from-blue-50/60 to-indigo-50/40 border border-blue-100 flex items-center justify-between">
               <div>
-                <span className="text-[10px] text-slate-400 uppercase font-semibold">
-                  Submitted By
+                <span className="text-xs font-semibold text-blue-900 uppercase tracking-wider">
+                  Compliance Posture
                 </span>
-                <div className="flex items-center gap-1.5 mt-1">
-                  <Avatar className="w-4 h-4">
-                    <AvatarImage src={review.author.avatar} />
-                    <AvatarFallback>{review.author.name.substring(0, 2)}</AvatarFallback>
-                  </Avatar>
-                  <span className="font-medium text-slate-800 truncate">
-                    {review.author.name}
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className={`text-3xl font-extrabold ${
+                    review.score >= 85
+                      ? 'text-emerald-600'
+                      : review.score >= 70
+                      ? 'text-amber-600'
+                      : 'text-rose-600'
+                  }`}>
+                    {review.score}
                   </span>
+                  <span className="text-xs text-slate-500">/ 100</span>
                 </div>
               </div>
 
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-semibold">
-                  Date
+              <div className="text-right">
+                <span className="text-xs font-medium text-slate-500 block">
+                  Violations Found
                 </span>
-                <div className="font-medium text-slate-800 mt-1 flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-slate-400" />
-                  {review.date}
-                </div>
+                <Badge
+                  variant={review.issuesDetected > 0 ? 'destructive' : 'neutral'}
+                  className="mt-1"
+                >
+                  {review.issuesDetected} {review.issuesDetected === 1 ? 'Rule' : 'Rules'} Triggered
+                </Badge>
               </div>
-
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-semibold">
-                  Compliance Score
-                </span>
-                <div className="text-base font-extrabold text-slate-900 mt-0.5">
-                  {review.score}
-                  <span className="text-xs text-slate-400 font-normal">/100</span>
-                </div>
-              </div>
-            </div>
-
-            {/* AI Summary Banner */}
-            <div className="p-3.5 rounded-lg bg-blue-50/60 border border-blue-100 text-xs text-slate-700 space-y-1">
-              <div className="flex items-center gap-1.5 font-semibold text-blue-900">
-                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                <span>AI Governance Assessment</span>
-              </div>
-              <p className="leading-relaxed">{review.summary}</p>
             </div>
 
             {/* Content Preview */}
-            {review.contentPreview && (
-              <div className="space-y-2">
-                <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-slate-400" />
-                  Content Excerpt
-                </h4>
-                <div className="p-3 rounded-md bg-slate-50 border border-slate-200 text-xs font-serif text-slate-700 leading-relaxed italic">
-                  "{review.contentPreview}"
-                </div>
+            <div className="space-y-2">
+              <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5 text-slate-400" />
+                <span>Audited Content Snippet</span>
+              </span>
+              <div className="p-3.5 rounded-lg border border-border bg-slate-50/60 text-xs text-slate-700 leading-relaxed font-sans max-h-48 overflow-y-auto">
+                {review.contentPreview || review.summary || 'No content preview available.'}
               </div>
-            )}
+            </div>
 
-            {/* Detected Issues List */}
+            {/* Findings & Suggestions */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
-                  Detected Issues ({review.issues?.length || 0})
-                </h4>
+                <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Rule Engine Findings ({review.issues?.length || 0})</span>
+                </span>
                 {review.issues && review.issues.length > 0 && (
                   <span className="text-[11px] text-slate-400">
                     Click "Apply Fix" to adopt suggestions
@@ -246,35 +245,37 @@ export const ReviewDetailsDrawer: React.FC<ReviewDetailsDrawerProps> = ({
               Close
             </Button>
 
-            <div className="flex items-center gap-2">
-              {review.status !== 'rejected' && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => {
-                    onStatusChange?.(review.id, 'rejected')
-                    onClose()
-                  }}
-                >
-                  Reject Asset
-                </Button>
-              )}
+            {isReviewerOrAdmin && (
+              <div className="flex items-center gap-2">
+                {review.status !== 'rejected' && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      onStatusChange?.(review.id, 'rejected')
+                      onClose()
+                    }}
+                  >
+                    Reject Asset
+                  </Button>
+                )}
 
-              {review.status !== 'approved' && (
-                <Button
-                  variant="primaryBlue"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => {
-                    onStatusChange?.(review.id, 'approved')
-                    onClose()
-                  }}
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Approve Content</span>
-                </Button>
-              )}
-            </div>
+                {review.status !== 'approved' && (
+                  <Button
+                    variant="primaryBlue"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => {
+                      onStatusChange?.(review.id, 'approved')
+                      onClose()
+                    }}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Approve Content</span>
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

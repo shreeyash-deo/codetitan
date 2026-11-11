@@ -852,6 +852,30 @@ export const ContentReviewPage: React.FC = () => {
         }
       />
 
+      {/* Brand Rules Unavailable Warning Banner */}
+      {isRulesUnavailable && (
+        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start justify-between gap-3 shadow-xs">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <h4 className="font-semibold text-sm">Brand Rules Unavailable — Incomplete Audit</h4>
+              <p className="text-xs text-amber-800 mt-0.5">
+                Brand compliance cannot be evaluated because this organisation has no approved brand rules. Approved rules are required to establish a compliance baseline.
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs bg-white border-amber-300 text-amber-900 hover:bg-amber-100 shrink-0 gap-1"
+            onClick={() => navigate('/brand-guidelines')}
+          >
+            <span>Brand Guidelines</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      )}
+
       {/* STUDIO MODE 1: SUBMISSION & CONFIGURATION */}
       {studioState === 'idle' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

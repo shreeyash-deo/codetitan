@@ -13,6 +13,7 @@ import { IssuesBreakdownChart } from '@/components/dashboard/IssuesBreakdownChar
 import { RecentReviewsTable } from '@/components/dashboard/RecentReviewsTable'
 import { RecentActivityFeed } from '@/components/dashboard/RecentActivityFeed'
 import { BrandGuidelinesStatusCard } from '@/components/dashboard/BrandGuidelinesStatusCard'
+import { EmployeeWorkflowCard } from '@/components/dashboard/EmployeeWorkflowCard'
 import { ReviewDetailsDrawer } from '@/components/dashboard/ReviewDetailsDrawer'
 import type { ReviewItem } from '@/types/review'
 import {
@@ -37,6 +38,17 @@ export const OverviewPage: React.FC = () => {
 
   const [selectedReview, setSelectedReview] = useState<ReviewItem | null>(null)
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
+
+  const userRole = (currentWorkspace?.role || '').toLowerCase()
+  const isAdmin = userRole === 'admin'
+  const isEmployee = userRole === 'employee' || userRole === 'editor'
+
+  const myTotalReviews = reviews.length
+  const myPendingCount = reviews.filter((r) => r.approvalStatus === 'pending').length
+  const myNeedsRevisionCount = reviews.filter(
+    (r) => r.approvalStatus === 'needs_revision' || r.approvalStatus === 'critical_issues'
+  ).length
+  const myApprovedCount = reviews.filter((r) => r.approvalStatus === 'approved').length
 
   // Convert HistoricalReviewRecord into ReviewItem for the dashboard table
   const mappedReviews: ReviewItem[] = reviews.map((r) => ({
@@ -117,20 +129,36 @@ export const OverviewPage: React.FC = () => {
             Welcome, {user?.name || currentWorkspace?.name || 'Operator'}
           </h1>
           <p className="text-xs sm:text-sm text-slate-500">
-            Real-time compliance posture and brand governance telemetry for {currentWorkspace?.name || 'your organisation'}.
+            {isEmployee
+              ? `Your personal compliance overview, submissions, and approval status for ${currentWorkspace?.name || 'your organisation'}.`
+              : `Real-time compliance posture and brand governance telemetry for ${currentWorkspace?.name || 'your organisation'}.`}
           </p>
         </div>
 
         <div className="flex items-center gap-2.5 pt-1 sm:pt-0">
-          <Button
-            variant="outline"
-            size="default"
-            className="gap-2 text-xs font-medium"
-            onClick={() => navigate('/brand-guidelines')}
-          >
-            <BookOpen className="w-3.5 h-3.5 text-slate-600" />
-            <span>Manage Guidelines</span>
-          </Button>
+          {isAdmin && (
+            <Button
+              variant="outline"
+              size="default"
+              className="gap-2 text-xs font-medium"
+              onClick={() => navigate('/brand-guidelines')}
+            >
+              <BookOpen className="w-3.5 h-3.5 text-slate-600" />
+              <span>Manage Guidelines</span>
+            </Button>
+          )}
+
+          {isEmployee && (
+            <Button
+              variant="outline"
+              size="default"
+              className="gap-2 text-xs font-medium"
+              onClick={() => navigate('/brand-guidelines')}
+            >
+              <BookOpen className="w-3.5 h-3.5 text-slate-600" />
+              <span>Brand Guidelines</span>
+            </Button>
+          )}
 
           <Button
             variant="primaryBlue"
@@ -158,24 +186,45 @@ export const OverviewPage: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
-                Establish your Brand Memory by uploading your corporate brand guidelines, editorial stylebooks, or terminology guides. Our AI engine extracts candidate rules for Admin approval, creating authoritative guardrails for all marketing copy.
+                {isEmployee
+                  ? 'Your workspace is ready. You can submit marketing copy, ad creative, or blog articles to run automated compliance audits against approved brand guidelines and request reviewer approvals.'
+                  : 'Establish your Brand Memory by uploading your corporate brand guidelines, editorial stylebooks, or terminology guides. Our AI engine extracts candidate rules for Admin approval, creating authoritative guardrails for all marketing copy.'}
               </p>
-              <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 pt-1">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">1</span>
-                  Upload Guidelines (PDF/DOCX)
-                </span>
-                <span className="text-slate-300">→</span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">2</span>
-                  Approve Brand Rules
-                </span>
-                <span className="text-slate-300">→</span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">3</span>
-                  Scan & Remediate Copy
-                </span>
-              </div>
+              {!isEmployee ? (
+                <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 pt-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">1</span>
+                    Upload Guidelines (PDF/DOCX)
+                  </span>
+                  <span className="text-slate-300">→</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">2</span>
+                    Approve Brand Rules
+                  </span>
+                  <span className="text-slate-300">→</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">3</span>
+                    Scan & Remediate Copy
+                  </span>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 pt-1">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">1</span>
+                    Review New Content Studio
+                  </span>
+                  <span className="text-slate-300">→</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">2</span>
+                    Inspect AI Findings & Remediate
+                  </span>
+                  <span className="text-slate-300">→</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-[10px]">3</span>
+                    Submit for Reviewer Sign-Off
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2.5 shrink-0">
@@ -183,10 +232,10 @@ export const OverviewPage: React.FC = () => {
                 variant="primaryBlue"
                 size="sm"
                 className="text-xs gap-1.5 shadow-xs"
-                onClick={() => navigate('/brand-guidelines')}
+                onClick={() => navigate(isEmployee ? '/content-review' : '/brand-guidelines')}
               >
-                <UploadCloud className="w-3.5 h-3.5" />
-                <span>Upload Guidelines</span>
+                {isEmployee ? <Sparkles className="w-3.5 h-3.5" /> : <UploadCloud className="w-3.5 h-3.5" />}
+                <span>{isEmployee ? 'Start Review' : 'Upload Guidelines'}</span>
               </Button>
             </div>
           </div>
@@ -195,49 +244,125 @@ export const OverviewPage: React.FC = () => {
 
       {/* 4 Live Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label="Brand Compliance Score"
-          value={metrics.hasReviews ? `${metrics.overallScore}/100` : '--'}
-          change={metrics.hasReviews ? (metrics.overallScore >= 80 ? 'Healthy posture' : 'Attention needed') : 'Awaiting audits'}
-          isPositive={metrics.overallScore >= 80}
-          trendDescription={metrics.hasReviews ? 'based on live reviews' : 'review copy to set baseline'}
-          icon={ShieldCheck}
-          highlight={true}
-          onClick={() => {
-            const el = document.getElementById('brand-health-section')
-            el?.scrollIntoView({ behavior: 'smooth' })
-          }}
-        />
+        {isEmployee ? (
+          <>
+            <StatCard
+              label="My Compliance Score"
+              value={metrics.hasReviews ? `${metrics.overallScore}/100` : '--'}
+              change={
+                metrics.hasReviews
+                  ? metrics.overallScore >= 80
+                    ? 'Healthy posture'
+                    : 'Attention needed'
+                  : 'Awaiting submissions'
+              }
+              isPositive={metrics.overallScore >= 80}
+              trendDescription="average on your copy"
+              icon={ShieldCheck}
+              highlight={true}
+              onClick={() => {
+                const el = document.getElementById('brand-health-section')
+                el?.scrollIntoView({ behavior: 'smooth' })
+              }}
+            />
 
-        <StatCard
-          label="Content Reviewed"
-          value={metrics.contentReviewedCount}
-          change={metrics.contentReviewedCount > 0 ? `${metrics.contentReviewedCount} audited` : 'No audits yet'}
-          isPositive={true}
-          trendDescription="assets scanned in org"
-          icon={FileCheck2}
-          onClick={() => navigate('/review-history')}
-        />
+            <StatCard
+              label="My Submissions"
+              value={myTotalReviews}
+              change={myTotalReviews > 0 ? `${myTotalReviews} submitted` : 'No submissions yet'}
+              isPositive={true}
+              trendDescription="assets created by you"
+              icon={FileCheck2}
+              onClick={() => navigate('/review-history')}
+            />
 
-        <StatCard
-          label="Pending Approvals"
-          value={metrics.pendingApprovalsCount}
-          change={metrics.pendingApprovalsCount > 0 ? `${metrics.pendingApprovalsCount} awaiting sign-off` : 'All cleared'}
-          isPositive={metrics.pendingApprovalsCount <= 2}
-          trendDescription="requires managerial review"
-          icon={Users2}
-          onClick={() => navigate('/team-approvals')}
-        />
+            <StatCard
+              label="Awaiting Approval"
+              value={myPendingCount}
+              change={myPendingCount > 0 ? `${myPendingCount} awaiting sign-off` : 'All cleared'}
+              isPositive={myPendingCount === 0}
+              trendDescription="in reviewer queue"
+              icon={Users2}
+              onClick={() => navigate('/review-history?filter=pending')}
+            />
 
-        <StatCard
-          label="Approved Brand Rules"
-          value={metrics.approvedRulesCount}
-          change={metrics.pendingCandidatesCount > 0 ? `${metrics.pendingCandidatesCount} pending candidates` : 'All rules active'}
-          isPositive={metrics.pendingCandidatesCount === 0}
-          trendDescription="authoritative rules"
-          icon={BookOpen}
-          onClick={() => navigate('/brand-guidelines')}
-        />
+            <StatCard
+              label={myNeedsRevisionCount > 0 ? 'Needs Revision' : 'Approved Assets'}
+              value={myNeedsRevisionCount > 0 ? myNeedsRevisionCount : myApprovedCount}
+              change={
+                myNeedsRevisionCount > 0
+                  ? `${myNeedsRevisionCount} require edits`
+                  : `${myApprovedCount} certified ready`
+              }
+              isPositive={myNeedsRevisionCount === 0}
+              trendDescription={
+                myNeedsRevisionCount > 0
+                  ? 'reviewer feedback provided'
+                  : 'ready for publication'
+              }
+              icon={myNeedsRevisionCount > 0 ? AlertTriangle : CheckCircle2}
+              onClick={() =>
+                navigate(
+                  myNeedsRevisionCount > 0
+                    ? '/review-history?filter=needs_revision'
+                    : '/review-history?filter=approved'
+                )
+              }
+            />
+          </>
+        ) : (
+          <>
+            <StatCard
+              label="Brand Compliance Score"
+              value={metrics.hasReviews ? `${metrics.overallScore}/100` : '--'}
+              change={
+                metrics.hasReviews
+                  ? metrics.overallScore >= 80
+                    ? 'Healthy posture'
+                    : 'Attention needed'
+                  : 'Awaiting audits'
+              }
+              isPositive={metrics.overallScore >= 80}
+              trendDescription={metrics.hasReviews ? 'based on live reviews' : 'review copy to set baseline'}
+              icon={ShieldCheck}
+              highlight={true}
+              onClick={() => {
+                const el = document.getElementById('brand-health-section')
+                el?.scrollIntoView({ behavior: 'smooth' })
+              }}
+            />
+
+            <StatCard
+              label="Content Reviewed"
+              value={metrics.contentReviewedCount}
+              change={metrics.contentReviewedCount > 0 ? `${metrics.contentReviewedCount} audited` : 'No audits yet'}
+              isPositive={true}
+              trendDescription="assets scanned in org"
+              icon={FileCheck2}
+              onClick={() => navigate('/review-history')}
+            />
+
+            <StatCard
+              label="Pending Approvals"
+              value={metrics.pendingApprovalsCount}
+              change={metrics.pendingApprovalsCount > 0 ? `${metrics.pendingApprovalsCount} awaiting sign-off` : 'All cleared'}
+              isPositive={metrics.pendingApprovalsCount <= 2}
+              trendDescription="requires managerial review"
+              icon={Users2}
+              onClick={() => navigate('/team-approvals')}
+            />
+
+            <StatCard
+              label="Approved Brand Rules"
+              value={metrics.approvedRulesCount}
+              change={metrics.pendingCandidatesCount > 0 ? `${metrics.pendingCandidatesCount} pending candidates` : 'All rules active'}
+              isPositive={metrics.pendingCandidatesCount === 0}
+              trendDescription="authoritative rules"
+              icon={BookOpen}
+              onClick={() => navigate('/brand-guidelines')}
+            />
+          </>
+        )}
       </div>
 
       {/* Brand Health & Issues Breakdown */}
@@ -249,11 +374,12 @@ export const OverviewPage: React.FC = () => {
             hasReviews={metrics.hasReviews}
             orgName={currentWorkspace?.name || 'Organisation'}
             activeRulesCount={metrics.approvedRulesCount}
+            isEmployee={isEmployee}
           />
         </div>
 
         <div className="lg:col-span-5">
-          <IssuesBreakdownChart issues={metrics.violationsByCategory} />
+          <IssuesBreakdownChart issues={metrics.violationsByCategory} isEmployee={isEmployee} />
         </div>
       </div>
 
@@ -263,10 +389,11 @@ export const OverviewPage: React.FC = () => {
           reviews={mappedReviews}
           onSelectReview={handleOpenReview}
           onOpenSubmitModal={() => navigate('/content-review')}
+          isEmployee={isEmployee}
         />
       </div>
 
-      {/* Recent Activity & Brand Guidelines Status */}
+      {/* Recent Activity & Right Card */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7">
           <RecentActivityFeed
@@ -282,12 +409,21 @@ export const OverviewPage: React.FC = () => {
         </div>
 
         <div className="lg:col-span-5">
-          <BrandGuidelinesStatusCard
-            approvedRules={metrics.approvedRulesCount}
-            pendingRules={metrics.pendingCandidatesCount}
-            sourceDocsCount={metrics.sourceDocsCount}
-            onManageClick={() => navigate('/brand-guidelines')}
-          />
+          {isEmployee ? (
+            <EmployeeWorkflowCard
+              pendingCount={myPendingCount}
+              needsRevisionCount={myNeedsRevisionCount}
+              approvedCount={myApprovedCount}
+              activeRulesCount={metrics.approvedRulesCount}
+            />
+          ) : (
+            <BrandGuidelinesStatusCard
+              approvedRules={metrics.approvedRulesCount}
+              pendingRules={metrics.pendingCandidatesCount}
+              sourceDocsCount={metrics.sourceDocsCount}
+              onManageClick={() => navigate('/brand-guidelines')}
+            />
+          )}
         </div>
       </div>
 
@@ -297,6 +433,7 @@ export const OverviewPage: React.FC = () => {
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         onStatusChange={handleStatusChange}
+        userRole={currentWorkspace?.role}
       />
     </motion.div>
   )

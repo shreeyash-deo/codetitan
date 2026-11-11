@@ -128,8 +128,12 @@ class ReviewService:
         end_date: Optional[datetime] = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        submitted_by: Optional[int] = None,
     ) -> PaginatedReviewsOut:
         query = db.query(ContentReview).filter(ContentReview.workspace_id == workspace_id)
+
+        if submitted_by is not None:
+            query = query.filter(ContentReview.submitted_by == submitted_by)
 
         # Title Search
         if search and search.strip():

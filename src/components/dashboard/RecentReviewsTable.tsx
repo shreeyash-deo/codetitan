@@ -19,12 +19,14 @@ interface RecentReviewsTableProps {
   reviews: ReviewItem[]
   onSelectReview: (review: ReviewItem) => void
   onOpenSubmitModal?: () => void
+  isEmployee?: boolean
 }
 
 export const RecentReviewsTable: React.FC<RecentReviewsTableProps> = ({
   reviews,
   onSelectReview,
   onOpenSubmitModal,
+  isEmployee = false,
 }) => {
   const [filterChannel, setFilterChannel] = useState<string>('all')
 
@@ -41,14 +43,16 @@ export const RecentReviewsTable: React.FC<RecentReviewsTableProps> = ({
             <div className="flex items-center gap-2">
               <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
                 <FileCheck2 className="w-4 h-4 text-blue-600" />
-                <span>Recent Reviews</span>
+                <span>{isEmployee ? 'My Recent Submissions' : 'Recent Reviews'}</span>
               </CardTitle>
               <Badge variant="neutral" className="text-[10px]">
-                {reviews.length} assets
+                {reviews.length} {isEmployee ? 'submitted' : 'assets'}
               </Badge>
             </div>
             <CardDescription className="text-xs text-slate-500 mt-0.5">
-              Select any row to inspect issues, flagged phrases, and apply AI suggestions
+              {isEmployee
+                ? 'Select any submission to inspect reviewer comments, compliance score, and apply suggestions'
+                : 'Select any row to inspect issues, flagged phrases, and apply AI suggestions'}
             </CardDescription>
           </div>
 
@@ -108,10 +112,10 @@ export const RecentReviewsTable: React.FC<RecentReviewsTableProps> = ({
                 <tr>
                   <th className="px-4 sm:px-5 py-3">Content Name</th>
                   <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3">Submitted By</th>
+                  {!isEmployee && <th className="px-4 py-3">Submitted By</th>}
                   <th className="px-4 py-3">Score</th>
                   <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Date</th>
+                  <th className="px-4 py-3">{isEmployee ? 'Submitted' : 'Date'}</th>
                   <th className="px-4 py-3 text-right">Action</th>
                 </tr>
               </thead>
@@ -139,20 +143,22 @@ export const RecentReviewsTable: React.FC<RecentReviewsTableProps> = ({
                       </Badge>
                     </td>
 
-                    {/* Submitted by */}
-                    <td className="px-4 py-3.5 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <Avatar className="w-5 h-5 shrink-0">
-                          <AvatarImage src={rev.author.avatar} alt={rev.author.name} />
-                          <AvatarFallback className="text-[9px]">
-                            {rev.author.name.substring(0, 2)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span className="text-slate-700 font-medium truncate">
-                          {rev.author.name}
-                        </span>
-                      </div>
-                    </td>
+                    {/* Submitted by - hidden for employee */}
+                    {!isEmployee && (
+                      <td className="px-4 py-3.5 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <Avatar className="w-5 h-5 shrink-0">
+                            <AvatarImage src={rev.author.avatar} alt={rev.author.name} />
+                            <AvatarFallback className="text-[9px]">
+                              {rev.author.name.substring(0, 2)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="text-slate-700 font-medium truncate">
+                            {rev.author.name}
+                          </span>
+                        </div>
+                      </td>
+                    )}
 
                     {/* Compliance score */}
                     <td className="px-4 py-3.5 whitespace-nowrap">

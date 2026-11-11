@@ -22,12 +22,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { info } = useToast()
   const { currentWorkspace } = useWorkspace()
-  const isAdmin = (currentWorkspace?.role || '').toLowerCase() === 'admin'
+  const userRole = (currentWorkspace?.role || '').toLowerCase()
+  const isAdmin = userRole === 'admin'
+  const isReviewer = userRole === 'reviewer'
+  const isEmployee = userRole === 'employee' || userRole === 'editor'
+  const isReviewerOrAdmin = isAdmin || isReviewer
 
-  const visibleNavItems = mainNavigationItems.filter((item) => {
-    if (item.id === 'settings' && !isAdmin) return false
-    return true
-  })
+  const visibleNavItems = mainNavigationItems
+    .filter((item) => {
+      if (item.id === 'settings' && !isAdmin) return false
+      if (item.id === 'team-approvals' && !isReviewerOrAdmin) return false
+      return true
+    })
+    .map((item) => {
+      if (isEmployee) {
+        if (item.id === 'review-history') {
+          return {
+            ...item,
+            label: 'My Submissions',
+            description: 'Track your submitted assets & reviews',
+          }
+        }
+        if (item.id === 'brand-guidelines') {
+          return {
+            ...item,
+            description: 'Approved brand rules & standards reference',
+          }
+        }
+      }
+      return item
+    })
 
   return (
     <aside

@@ -42,7 +42,10 @@ class ApprovalService:
 
     @staticmethod
     def list_workspace_approvals(
-        db: Session, workspace_id: int, status: Optional[str] = None
+        db: Session,
+        workspace_id: int,
+        status: Optional[str] = None,
+        submitted_by: Optional[int] = None,
     ) -> List[Approval]:
         query = (
             db.query(Approval)
@@ -55,6 +58,8 @@ class ApprovalService:
                 )
             )
         )
+        if submitted_by is not None:
+            query = query.filter(ContentReview.submitted_by == submitted_by)
         if status:
             query = query.filter(Approval.status == status.lower())
         return query.order_by(Approval.created_at.desc()).all()

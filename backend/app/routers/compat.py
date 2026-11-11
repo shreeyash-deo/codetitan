@@ -124,8 +124,9 @@ def list_brands(
 
     results = []
     for w in workspaces:
-        stats = dashboard_service.get_dashboard_stats(db, w.id)
         member = workspace_service.get_member(db, w.id, current_user.id)
+        role = member.role if member else None
+        stats = dashboard_service.get_dashboard_stats(db, w.id, user_id=current_user.id, role=role)
         results.append({
             "id": str(w.id),
             "org_id": w.org_id,
@@ -152,8 +153,9 @@ def get_brand(
     w = workspace_service.get_by_id(db, ws_id)
     if not w:
         raise HTTPException(status_code=404, detail="Brand not found")
-    stats = dashboard_service.get_dashboard_stats(db, w.id)
     member = workspace_service.get_member(db, w.id, current_user.id)
+    role = member.role if member else None
+    stats = dashboard_service.get_dashboard_stats(db, w.id, user_id=current_user.id, role=role)
     return {
         "id": str(w.id),
         "org_id": w.org_id,
@@ -176,7 +178,9 @@ def get_brand_telemetry(
     current_user: User = Depends(get_current_user),
 ):
     ws_id = get_target_workspace_id(db, current_user, brand_id)
-    stats = dashboard_service.get_dashboard_stats(db, ws_id)
+    member = workspace_service.get_member(db, ws_id, current_user.id)
+    role = member.role if member else None
+    stats = dashboard_service.get_dashboard_stats(db, ws_id, user_id=current_user.id, role=role)
     return {
         "overallScore": int(stats.average_compliance_score),
         "hasReviews": stats.has_reviews,
@@ -1293,6 +1297,10 @@ def get_review_history(
     current_user: User = Depends(get_current_user),
 ):
     ws_id = get_target_workspace_id(db, current_user, brand_id)
+    member = workspace_service.get_member(db, ws_id, current_user.id)
+    is_employee = bool(member and member.role.lower() in ("employee", "editor"))
+    submitted_by = current_user.id if is_employee else None
+
     reviews_res = review_service.list_reviews(
         db=db,
         workspace_id=ws_id,
@@ -1300,6 +1308,7 @@ def get_review_history(
         size=100,
         search=search,
         status=status,
+        submitted_by=submitted_by,
     )
 
     return [_map_review_to_historical_record(r, current_user) for r in reviews_res.items]
@@ -1320,10 +1329,17 @@ def get_history_by_id(
     if not review:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review record not found")
 
-    if not workspace_service.is_member(db, review.workspace_id, current_user.id):
+    member = workspace_service.get_member(db, review.workspace_id, current_user.id)
+    if not member:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied. You are not a member of the workspace for this review.",
+        )
+
+    if member.role.lower() in ("employee", "editor") and review.submitted_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Employees may only view their own submitted reviews.",
         )
 
     return _map_review_to_historical_record(review, current_user)

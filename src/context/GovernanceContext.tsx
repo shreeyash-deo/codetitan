@@ -110,7 +110,7 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setError(null)
     try {
       const brandId = String(currentWorkspace.id)
-      const isAdmin = (currentWorkspace.role || user?.role || '').toLowerCase() === 'admin'
+      const isAdmin = (currentWorkspace.role || '').toLowerCase() === 'admin'
 
       const [rulesRes, candidatesRes, docsRes, historyRes, telemetryRes] = await Promise.allSettled([
         guidelineService.getApprovedRules(brandId),
@@ -150,7 +150,7 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     } finally {
       setIsLoading(false)
     }
-  }, [currentWorkspace?.id, currentWorkspace?.role, user?.role])
+  }, [currentWorkspace?.id, currentWorkspace?.role])
 
   // Fetch initial data from services
   useEffect(() => {
@@ -167,6 +167,13 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const timestamp = 'Just now'
     const authorName = user?.name || 'Reviewer'
     const authorRole = currentWorkspace?.role || 'Reviewer'
+
+    const resolvedRole = (currentWorkspace?.role || '').toLowerCase()
+    if (resolvedRole !== 'admin' && resolvedRole !== 'reviewer') {
+      const msg = 'Operation not permitted. Required workspace role: Reviewer or Admin.'
+      toastError(msg, 'Approval Blocked')
+      return
+    }
 
     try {
       if (!apiClient.isMockMode()) {
@@ -211,6 +218,13 @@ export const GovernanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const timestamp = 'Just now'
     const authorName = user?.name || 'Reviewer'
     const authorRole = currentWorkspace?.role || 'Reviewer'
+
+    const resolvedRole = (currentWorkspace?.role || '').toLowerCase()
+    if (resolvedRole !== 'admin' && resolvedRole !== 'reviewer') {
+      const msg = 'Operation not permitted. Required workspace role: Reviewer or Admin.'
+      toastError(msg, 'Changes Request Blocked')
+      return
+    }
 
     try {
       if (!apiClient.isMockMode()) {

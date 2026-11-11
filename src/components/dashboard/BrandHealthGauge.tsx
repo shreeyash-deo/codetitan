@@ -10,6 +10,7 @@ interface BrandHealthGaugeProps {
   trend?: string
   orgName?: string
   activeRulesCount?: number
+  isEmployee?: boolean
 }
 
 export const BrandHealthGauge: React.FC<BrandHealthGaugeProps> = ({
@@ -19,6 +20,7 @@ export const BrandHealthGauge: React.FC<BrandHealthGaugeProps> = ({
   trend = '+4.2 pts',
   orgName = 'Organisation',
   activeRulesCount = 0,
+  isEmployee = false,
 }) => {
   // Calculate SVG arc parameters for a clean semi-circle gauge
   const radius = 70
@@ -56,10 +58,12 @@ export const BrandHealthGauge: React.FC<BrandHealthGaugeProps> = ({
           <div>
             <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-blue-600" />
-              <span>Brand Health Index</span>
+              <span>{isEmployee ? 'My Content Health Index' : 'Brand Health Index'}</span>
             </CardTitle>
             <CardDescription className="text-xs text-slate-500">
-              Aggregated governance posture across all {orgName} touchpoints
+              {isEmployee
+                ? 'Compliance posture across your submitted copy'
+                : `Aggregated governance posture across all ${orgName} touchpoints`}
             </CardDescription>
           </div>
           <Badge variant={healthVariant as any} className="text-[11px] font-medium py-0.5">
@@ -119,7 +123,9 @@ export const BrandHealthGauge: React.FC<BrandHealthGaugeProps> = ({
                   <span>{trend} vs 30-day baseline</span>
                 </div>
                 <p className="text-xs text-slate-500 leading-relaxed max-w-[210px]">
-                  {orgName} content compliance is actively monitored against approved brand memory.
+                  {isEmployee
+                    ? 'Your submitted copy is actively evaluated against approved brand rules.'
+                    : `${orgName} content compliance is actively monitored against approved brand memory.`}
                 </p>
               </>
             ) : (
@@ -129,7 +135,9 @@ export const BrandHealthGauge: React.FC<BrandHealthGaugeProps> = ({
                   <span>Baseline pending</span>
                 </div>
                 <p className="text-xs text-slate-500 leading-relaxed max-w-[210px]">
-                  No marketing copy has been scanned yet. Review an asset to calculate your initial health index.
+                  {isEmployee
+                    ? 'No copy submitted yet. Review an asset to calculate your initial score.'
+                    : 'No marketing copy has been scanned yet. Review an asset to calculate your initial health index.'}
                 </p>
               </>
             )}

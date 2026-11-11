@@ -7,6 +7,7 @@ import type { ViolationCategoryStat } from '@/services/brandService'
 
 interface IssuesBreakdownChartProps {
   issues?: ViolationCategoryStat[]
+  isEmployee?: boolean
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -24,7 +25,10 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 const FALLBACK_COLORS = ['#3B82F6', '#6366F1', '#F59E0B', '#EF4444', '#10B981', '#8B5CF6']
 
-export const IssuesBreakdownChart: React.FC<IssuesBreakdownChartProps> = ({ issues = [] }) => {
+export const IssuesBreakdownChart: React.FC<IssuesBreakdownChartProps> = ({
+  issues = [],
+  isEmployee = false,
+}) => {
   const totalIssues = issues.reduce((acc, curr) => acc + curr.count, 0)
 
   return (
@@ -34,10 +38,12 @@ export const IssuesBreakdownChart: React.FC<IssuesBreakdownChartProps> = ({ issu
           <div>
             <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-500" />
-              <span>Issues Breakdown</span>
+              <span>{isEmployee ? 'Flags in Your Copy' : 'Issues Breakdown'}</span>
             </CardTitle>
             <CardDescription className="text-xs text-slate-500">
-              Categorized compliance flags across active copy ({totalIssues} total)
+              {isEmployee
+                ? `Compliance flags identified across your submitted copy (${totalIssues} total)`
+                : `Categorized compliance flags across active copy (${totalIssues} total)`}
             </CardDescription>
           </div>
           <Link

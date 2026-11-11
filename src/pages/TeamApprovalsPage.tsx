@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { PageHeader } from '@/components/common/PageHeader'
 import { Card } from '@/components/ui/card'
@@ -33,6 +34,7 @@ import {
 } from 'lucide-react'
 
 export const TeamApprovalsPage: React.FC = () => {
+  const navigate = useNavigate()
   const { reviews, approveContent, requestChanges, addComment, isLoading } = useGovernance()
   const { user } = useAuth()
   const { currentWorkspace } = useWorkspace()
@@ -140,6 +142,35 @@ export const TeamApprovalsPage: React.FC = () => {
   ).length
   const revisionCount = reviews.filter((r) => r.approvalStatus === 'needs_revision').length
   const approvedCount = reviews.filter((r) => r.approvalStatus === 'approved').length
+
+  if (!isReviewerOrAdmin) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="max-w-2xl mx-auto py-16 px-4 text-center space-y-6"
+      >
+        <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto border border-blue-200 shadow-xs">
+          <ShieldCheck className="w-8 h-8" />
+        </div>
+        <div className="space-y-2">
+          <h2 className="text-xl font-bold text-slate-900">Governance & Reviewer Access Restricted</h2>
+          <p className="text-xs sm:text-sm text-slate-500 leading-relaxed max-w-lg mx-auto">
+            The Team & Approvals dashboard is an administrative control desk for Workspace Reviewers and Admins.
+            As an <strong>Employee</strong>, you can track the review status of your submitted copy, view comments, and check approval certificates in <strong>My Submissions</strong>.
+          </p>
+        </div>
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <Button variant="outline" size="sm" onClick={() => navigate('/')}>
+            Back to Dashboard
+          </Button>
+          <Button variant="primaryBlue" size="sm" onClick={() => navigate('/review-history')}>
+            Go to My Submissions
+          </Button>
+        </div>
+      </motion.div>
+    )
+  }
 
   return (
     <motion.div

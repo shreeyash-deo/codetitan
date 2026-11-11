@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.dependencies import verify_workspace_access, get_current_user
+from app.core.dependencies import verify_workspace_access, get_current_user, get_workspace_member
 from app.models.review import ContentReview
 from app.models.activity import ReviewActivity
 from app.models.user import User
+from app.models.workspace_member import WorkspaceMember
 from app.schemas.review import (
     ContentReviewSubmission,
     ContentReviewUpdate,
@@ -39,10 +40,17 @@ def get_review_with_access(
             detail="Content review not found.",
         )
 
-    if not workspace_service.is_member(db, review.workspace_id, current_user.id):
+    member = workspace_service.get_member(db, review.workspace_id, current_user.id)
+    if not member:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: You are not a member of the workspace containing this review.",
+        )
+
+    if member.role.lower() in ("employee", "editor") and review.submitted_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Employees may only view their own submitted reviews.",
         )
     return review
 
@@ -117,9 +125,11 @@ def list_reviews(
     sort_by: str = Query("created_at", description="Sort by 'created_at' or 'compliance_score'"),
     sort_order: str = Query("desc", description="Sort order 'asc' or 'desc'"),
     db: Session = Depends(get_db),
-    _: int = Depends(verify_workspace_access),
+    member: WorkspaceMember = Depends(get_workspace_member),
+    current_user: User = Depends(get_current_user),
 ):
     """List historical content reviews in the workspace with pagination, full-text search, and status filters."""
+    submitted_by = current_user.id if member.role.lower() in ("employee", "editor") else None
     return review_service.list_reviews(
         db=db,
         workspace_id=workspace_id,
@@ -132,6 +142,7 @@ def list_reviews(
         end_date=end_date,
         sort_by=sort_by,
         sort_order=sort_order,
+        submitted_by=submitted_by,
     )
 
 

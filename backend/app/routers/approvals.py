@@ -2,11 +2,12 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.core.dependencies import verify_workspace_access, get_current_user
+from app.core.dependencies import verify_workspace_access, get_current_user, get_workspace_member
 from app.models.approval import Approval
 from app.models.review import ContentReview
 from app.models.rule import BrandRule
 from app.models.user import User
+from app.models.workspace_member import WorkspaceMember
 from app.schemas.approval import (
     ApprovalCreate,
     ApprovalOut,
@@ -125,10 +126,16 @@ def list_workspace_approvals(
     workspace_id: int,
     status: Optional[str] = Query(None, description="Filter by status (pending, approved, rejected, changes_requested)"),
     db: Session = Depends(get_db),
+    member: WorkspaceMember = Depends(get_workspace_member),
+    current_user: User = Depends(get_current_user),
     _: int = Depends(verify_workspace_access),
 ):
-    """Retrieve all pending and processed approval tickets for this workspace."""
-    return approval_service.list_workspace_approvals(db=db, workspace_id=workspace_id, status=status)
+    """Retrieve all pending and processed approval tickets for this workspace, scoped to user for Employees."""
+    is_employee = bool(member and member.role.lower() in ("employee", "editor"))
+    submitted_by = current_user.id if is_employee else None
+    return approval_service.list_workspace_approvals(
+        db=db, workspace_id=workspace_id, status=status, submitted_by=submitted_by
+    )
 
 
 @router.post(

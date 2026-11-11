@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { PageHeader } from '@/components/common/PageHeader'
 import { Card, CardContent } from '@/components/ui/card'
@@ -8,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { ReviewDetailReportModal } from '@/components/history/ReviewDetailReportModal'
 import { useGovernance } from '@/context/GovernanceContext'
+import { useWorkspace } from '@/hooks/useWorkspace'
 import { useToast } from '@/context/ToastContext'
 import type { HistoricalReviewRecord, ApprovalFilter } from '@/types/approval'
 import {
@@ -22,10 +24,17 @@ import {
 } from 'lucide-react'
 
 export const ReviewHistoryPage: React.FC = () => {
+  const [searchParams] = useSearchParams()
+  const initialFilter = (searchParams.get('filter') as ApprovalFilter) || 'all'
+
   const { reviews, addComment, isLoading } = useGovernance()
+  const { currentWorkspace } = useWorkspace()
   const { success } = useToast()
 
-  const [activeFilter, setActiveFilter] = useState<ApprovalFilter>('all')
+  const userRole = (currentWorkspace?.role || '').toLowerCase()
+  const isEmployee = userRole === 'employee' || userRole === 'editor'
+
+  const [activeFilter, setActiveFilter] = useState<ApprovalFilter>(initialFilter)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedReview, setSelectedReview] = useState<HistoricalReviewRecord | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
@@ -63,7 +72,7 @@ export const ReviewHistoryPage: React.FC = () => {
         return (
           <Badge variant="blue" className="text-[10px] gap-1">
             <Clock className="w-3 h-3 text-blue-600" />
-            Pending
+            {isEmployee ? 'In Review' : 'Pending'}
           </Badge>
         )
       case 'needs_revision':
@@ -86,7 +95,12 @@ export const ReviewHistoryPage: React.FC = () => {
   }
 
   const exportCSV = () => {
-    success(`Exported ${filteredReviews.length} compliance audit logs to CSV.`, 'Audit Exported')
+    success(
+      isEmployee
+        ? `Exported ${filteredReviews.length} personal submissions to CSV.`
+        : `Exported ${filteredReviews.length} compliance audit logs to CSV.`,
+      'Audit Exported'
+    )
   }
 
   return (
@@ -98,12 +112,16 @@ export const ReviewHistoryPage: React.FC = () => {
     >
       {/* Page Header */}
       <PageHeader
-        title="Review History"
-        description="Immutable governance ledger recording every evaluated asset, author submissions, reviewer sign-offs, and compliance scores."
+        title={isEmployee ? 'My Submissions' : 'Review History'}
+        description={
+          isEmployee
+            ? 'Track your submitted marketing copy, review compliance audit scores, and inspect reviewer feedback.'
+            : 'Immutable governance ledger recording every evaluated asset, author submissions, reviewer sign-offs, and compliance scores.'
+        }
         badge={
           <Badge variant="blue" className="gap-1 font-mono">
             <ShieldCheck className="w-3 h-3 text-blue-600" />
-            Audited Ledger
+            {isEmployee ? 'Author Submissions' : 'Audited Ledger'}
           </Badge>
         }
         actions={
@@ -114,7 +132,7 @@ export const ReviewHistoryPage: React.FC = () => {
             onClick={exportCSV}
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Export CSV Audit</span>
+            <span>{isEmployee ? 'Export Submissions CSV' : 'Export CSV Audit'}</span>
           </Button>
         }
       />
@@ -124,7 +142,7 @@ export const ReviewHistoryPage: React.FC = () => {
         {/* Five Filter Tabs */}
         <div className="flex items-center gap-1 overflow-x-auto pb-1 lg:pb-0">
           {[
-            { id: 'all', label: 'All Reviews', count: reviews.length },
+            { id: 'all', label: isEmployee ? 'All Submissions' : 'All Reviews', count: reviews.length },
             {
               id: 'approved',
               label: 'Approved',
@@ -132,7 +150,7 @@ export const ReviewHistoryPage: React.FC = () => {
             },
             {
               id: 'pending',
-              label: 'Pending',
+              label: isEmployee ? 'In Review' : 'Pending',
               count: reviews.filter((r) => r.approvalStatus === 'pending').length,
             },
             {
@@ -173,7 +191,11 @@ export const ReviewHistoryPage: React.FC = () => {
         <div className="w-full lg:w-72 relative">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
           <Input
-            placeholder="Search by title, author, or reviewer..."
+            placeholder={
+              isEmployee
+                ? 'Search your submissions by title...'
+                : 'Search by title, author, or reviewer...'
+            }
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-8 text-xs"
@@ -190,11 +212,11 @@ export const ReviewHistoryPage: React.FC = () => {
                 <tr>
                   <th className="px-5 py-3.5">Content Title</th>
                   <th className="px-4 py-3.5">Content Type</th>
-                  <th className="px-4 py-3.5">Submitted By</th>
+                  {!isEmployee && <th className="px-4 py-3.5">Submitted By</th>}
                   <th className="px-4 py-3.5">Assigned Reviewer</th>
                   <th className="px-4 py-3.5">Score</th>
                   <th className="px-4 py-3.5">Violations</th>
-                  <th className="px-4 py-3.5">Review Date</th>
+                  <th className="px-4 py-3.5">{isEmployee ? 'Submitted Date' : 'Review Date'}</th>
                   <th className="px-4 py-3.5">Approval Status</th>
                   <th className="px-4 py-3.5 text-right">Actions</th>
                 </tr>
@@ -202,22 +224,28 @@ export const ReviewHistoryPage: React.FC = () => {
               <tbody className="divide-y divide-border/60">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={9} className="p-10 text-center text-slate-400">
-                      Loading review history ledger from database...
+                    <td colSpan={isEmployee ? 8 : 9} className="p-10 text-center text-slate-400">
+                      {isEmployee ? 'Loading your submissions...' : 'Loading review history ledger from database...'}
                     </td>
                   </tr>
                 ) : filteredReviews.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="p-10 text-center space-y-2">
+                    <td colSpan={isEmployee ? 8 : 9} className="p-10 text-center space-y-2">
                       <p className="text-slate-600 font-medium">
                         {reviews.length === 0
-                          ? 'No review history recorded for this organisation yet'
-                          : 'No review history records match the selected filter'}
+                          ? (isEmployee
+                              ? "You haven't submitted any content for review yet"
+                              : 'No review history recorded for this organisation yet')
+                          : (isEmployee
+                              ? 'No submissions match the selected filter'
+                              : 'No review history records match the selected filter')}
                       </p>
                       <p className="text-xs text-slate-400 max-w-sm mx-auto">
                         {reviews.length === 0
-                          ? 'Submit marketing copy in the Content Review Studio to record immutable audit trials.'
-                          : 'Try clearing your search query or selecting "All Reviews".'}
+                          ? (isEmployee
+                              ? 'Submit marketing copy in the Content Review Studio to check compliance and request reviewer sign-off.'
+                              : 'Submit marketing copy in the Content Review Studio to record immutable audit trials.')
+                          : 'Try clearing your search query or selecting "All".'}
                       </p>
                       {reviews.length > 0 && (
                         <div className="pt-2">
@@ -255,18 +283,20 @@ export const ReviewHistoryPage: React.FC = () => {
                         </Badge>
                       </td>
 
-                      {/* Submitted By */}
-                      <td className="px-4 py-3.5 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          <Avatar className="w-5 h-5">
-                            <AvatarImage src={rev.submittedBy.avatar} />
-                            <AvatarFallback>{rev.submittedBy.name.substring(0, 2)}</AvatarFallback>
-                          </Avatar>
-                          <span className="text-slate-800 font-medium truncate">
-                            {rev.submittedBy.name}
-                          </span>
-                        </div>
-                      </td>
+                      {/* Submitted By - Only shown for Admin/Reviewer */}
+                      {!isEmployee && (
+                        <td className="px-4 py-3.5 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <Avatar className="w-5 h-5">
+                              <AvatarImage src={rev.submittedBy.avatar} />
+                              <AvatarFallback>{rev.submittedBy.name.substring(0, 2)}</AvatarFallback>
+                            </Avatar>
+                            <span className="text-slate-800 font-medium truncate">
+                              {rev.submittedBy.name}
+                            </span>
+                          </div>
+                        </td>
+                      )}
 
                       {/* Reviewer */}
                       <td className="px-4 py-3.5 whitespace-nowrap">
