@@ -1,5 +1,6 @@
 import os
 from typing import List
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,7 +27,7 @@ class Settings(BaseSettings):
     ]
 
     # File Uploads
-    UPLOAD_DIR: str = "./uploads"
+    UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
     MAX_UPLOAD_SIZE_BYTES: int = 15 * 1024 * 1024  # 15 MB
     ALLOWED_EXTENSIONS: List[str] = ["pdf", "docx", "txt"]
 
@@ -40,6 +41,52 @@ class Settings(BaseSettings):
     AI_TEMPERATURE: float = 0.2
     AI_TIMEOUT: int = 45
     AI_MAX_RETRIES: int = 2
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def normalize_database_url_input(cls, v: str) -> str:
+        """
+        Safely normalize legacy postgres:// connection schemes to postgresql://.
+        Supports postgresql://, postgresql+psycopg2://, sqlite:///, etc.
+        """
+        if isinstance(v, str):
+            v_stripped = v.strip()
+            if v_stripped.startswith("postgres://"):
+                return "postgresql://" + v_stripped[len("postgres://"):]
+            return v_stripped
+        return v
+
+    @property
+    def normalized_database_url(self) -> str:
+        """
+        Ensures a normalized database URL compatible with SQLAlchemy 2 and Alembic.
+        Converts legacy postgres:// to postgresql://.
+        Preserves postgresql://, postgresql+psycopg2://, sqlite:///, etc.
+        """
+        url = (self.DATABASE_URL or "").strip()
+        if url.startswith("postgres://"):
+            return "postgresql://" + url[len("postgres://"):]
+        return url
+
+    @property
+    def safe_database_info(self) -> str:
+        """
+        Returns dialect and host information with credentials masked.
+        Never prints or logs database passwords or sensitive credentials.
+        """
+        url = self.normalized_database_url
+        if url.startswith("sqlite"):
+            return "sqlite"
+        try:
+            from sqlalchemy.engine import make_url
+            u = make_url(url)
+            host_str = u.host or "localhost"
+            port_str = f":{u.port}" if u.port else ""
+            db_name = f"/{u.database}" if u.database else ""
+            return f"{u.drivername}://***:***@{host_str}{port_str}{db_name}"
+        except Exception:
+            scheme = url.split("://", 1)[0] if "://" in url else "unknown"
+            return f"{scheme}://***"
 
     @property
     def active_gemini_api_key(self) -> str:

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import math
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
@@ -623,6 +624,44 @@ async def upload_brand_document(
         "duplicateCount": duplicate_count,
         "approvedRulesCount": 0,
     }
+
+
+@router.get("/guidelines/documents/{document_id}/download", summary="Download source guideline document")
+def download_compat_guideline_document(
+    document_id: str,
+    brand_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        doc_id = int(document_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid document ID")
+
+    doc = db.query(GuidelineDocument).filter(GuidelineDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Guideline document not found")
+
+    member = workspace_service.get_member(db, doc.workspace_id, current_user.id)
+    if not member or member.status != "approved":
+        raise HTTPException(status_code=403, detail="Access denied: Not an approved member of this workspace")
+
+    file_path = Path(doc.file_path) if doc.file_path else None
+    if not file_path or not file_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Original file '{doc.filename}' is unavailable on local storage (ephemeral filesystem). "
+                "Extracted text and approved brand rules remain safely preserved in the database."
+            ),
+        )
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=str(file_path),
+        filename=doc.filename,
+        media_type="application/octet-stream",
+    )
 
 
 @router.post("/guidelines/documents/{document_id}/re-extract", summary="Re-extract rules from an existing document")

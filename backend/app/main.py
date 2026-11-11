@@ -10,6 +10,13 @@ from app.routers import auth, workspaces, guidelines, rules, reviews, approvals,
 
 
 def ensure_schema_upgrades():
+    """
+    Lightweight schema synchronization for local development.
+    In production environments (e.g. PostgreSQL), migrations are managed by Alembic.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+
     try:
         from sqlalchemy import inspect, text
         with engine.connect() as conn:
@@ -21,7 +28,7 @@ def ensure_schema_upgrades():
                 if "audited_content_hash" not in columns:
                     conn.execute(text("ALTER TABLE content_reviews ADD COLUMN audited_content_hash VARCHAR(64)"))
                 if "audited_at" not in columns:
-                    conn.execute(text("ALTER TABLE content_reviews ADD COLUMN audited_at DATETIME"))
+                    conn.execute(text("ALTER TABLE content_reviews ADD COLUMN audited_at TIMESTAMP"))
                 if "findings_count" not in columns:
                     conn.execute(text("ALTER TABLE content_reviews ADD COLUMN findings_count INTEGER DEFAULT 0 NOT NULL"))
                 if "rule_set_version" not in columns:
@@ -35,7 +42,7 @@ def ensure_schema_upgrades():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure uploads directory exists
+    # Ensure uploads directory exists (supports local dev or mounted Persistent Disk)
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     # Automatically create tables if using SQLite or initial bootstrap
     Base.metadata.create_all(bind=engine)
