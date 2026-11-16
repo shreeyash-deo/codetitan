@@ -361,7 +361,14 @@ class ReviewService:
         review.current_version_number = new_version_num
         review.content = content_to_audit
         review.compliance_score = comp_score
-        review.status = rev_status
+
+        # When creating a new content version, return review to in_review (or needs_changes).
+        # Previous approval decisions belong to prior immutable versions and do not approve the new content.
+        if rev_status == "approved" or review.status == "approved":
+            review.status = "in_review"
+        else:
+            review.status = rev_status
+
         review.audit_status = aud_status
         review.audited_content_hash = content_hash
         review.audited_at = datetime.now(timezone.utc)

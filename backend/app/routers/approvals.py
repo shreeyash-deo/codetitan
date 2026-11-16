@@ -21,14 +21,84 @@ from app.services.workspace_service import workspace_service
 router = APIRouter(tags=["Approvals & Governance Workflow"])
 
 
-def _verify_approval_access(db: Session, approval: Approval, current_user: User):
-    """Ensure user has access to the workspace of this approval."""
+def _verify_approval_access(
+    db: Session,
+    approval: Approval,
+    current_user: User,
+    require_decision_role: bool = False,
+):
+    """
+    Ensure user has access to the workspace and item of this approval.
+    - Resolves workspace_id from approval.
+    - Validates underlying review or brand rule relationship.
+    - Verifies user has active approved membership in that workspace.
+    - If user is an Employee (or Editor):
+      - Must only retrieve approval records where approval.submitted_by == current_user.id.
+      - Cannot perform decision actions (approve, reject, request-changes).
+    - If user is Reviewer or Admin:
+      - Has workspace-wide approval access within that workspace.
+      - Can perform permitted approval decisions within that workspace.
+    - Prevents cross-workspace access or access when membership is revoked.
+    """
     ws_id = approval_service.get_approval_workspace_id(db, approval)
-    if ws_id is not None:
-        if not workspace_service.is_member(db, ws_id, current_user.id):
+    if ws_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Approval item is not associated with a valid workspace.",
+        )
+
+    # Validate underlying review or brand rule relationship
+    if approval.review_id:
+        review = db.query(ContentReview).filter(ContentReview.id == approval.review_id).first()
+        if not review or review.workspace_id != ws_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Underlying content review not found in workspace.",
+            )
+    elif approval.brand_rule_id:
+        rule = db.query(BrandRule).filter(BrandRule.id == approval.brand_rule_id).first()
+        if not rule or rule.workspace_id != ws_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Underlying brand rule not found in workspace.",
+            )
+
+    # Check active/approved membership in the workspace
+    member = (
+        db.query(WorkspaceMember)
+        .filter(
+            WorkspaceMember.workspace_id == ws_id,
+            WorkspaceMember.user_id == current_user.id,
+            WorkspaceMember.status == "approved",
+        )
+        .first()
+    )
+    if not member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: You do not have access to this approval item.",
+        )
+
+    user_role = member.role.lower()
+
+    if require_decision_role:
+        if user_role not in ("admin", "reviewer"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied: You do not have access to this approval item.",
+                detail="Operation not permitted. Required workspace role: Reviewer or Admin",
+            )
+        if approval.brand_rule_id and user_role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Operation not permitted. Required workspace role: Admin",
+            )
+
+    # Employee isolation: Employees may only retrieve their own submissions
+    if user_role in ("employee", "editor"):
+        if approval.submitted_by != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Employees can only access their own approval submissions.",
             )
 
 
@@ -52,10 +122,16 @@ def request_review_approval(
     review = db.query(ContentReview).filter(ContentReview.id == review_id).first()
     if not review:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content review not found.")
-    if not workspace_service.is_member(db, review.workspace_id, current_user.id):
+    member = workspace_service.get_member(db, review.workspace_id, current_user.id)
+    if not member or member.status != "approved":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: You are not a member of the workspace for this review.",
+        )
+    if member.role.lower() in ("employee", "editor") and review.submitted_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Employees can only request approval for their own reviews.",
         )
 
     comment = payload.comment if payload else None
@@ -93,6 +169,15 @@ def request_rule_approval(
     current_user: User = Depends(get_current_user),
 ):
     """Submit a brand rule for sign-off as official brand knowledge."""
+    rule = db.query(BrandRule).filter(BrandRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Brand rule not found.")
+    member = workspace_service.get_member(db, rule.workspace_id, current_user.id)
+    if not member or member.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: You are not a member of the workspace for this rule.",
+        )
     comment = payload.comment if payload else None
     reviewer_id = payload.reviewer_id if payload else None
     try:
@@ -190,7 +275,7 @@ def create_workspace_approval(
 # ============================================================================
 
 @router.get(
-    "/approvals/{approval_id}",
+    "/approvals/{approval_id:int}",
     response_model=ApprovalOut,
     summary="Get single approval item by ID",
 )
@@ -202,12 +287,12 @@ def get_approval(
     approval = approval_service.get_by_id(db, approval_id)
     if not approval:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found.")
-    _verify_approval_access(db, approval, current_user)
+    _verify_approval_access(db, approval, current_user, require_decision_role=False)
     return approval
 
 
 @router.post(
-    "/approvals/{approval_id}/approve",
+    "/approvals/{approval_id:int}/approve",
     response_model=ApprovalOut,
     summary="Approve a review or brand rule",
 )
@@ -219,7 +304,7 @@ def approve_request(
     approval = approval_service.get_by_id(db, approval_id)
     if not approval:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found.")
-    _verify_approval_access(db, approval, current_user)
+    _verify_approval_access(db, approval, current_user, require_decision_role=True)
 
     try:
         return approval_service.approve(db=db, approval=approval, reviewer=current_user)
@@ -230,7 +315,7 @@ def approve_request(
 
 
 @router.post(
-    "/approvals/{approval_id}/request-changes",
+    "/approvals/{approval_id:int}/request-changes",
     response_model=ApprovalOut,
     summary="Request changes on a submitted review or rule",
 )
@@ -243,7 +328,7 @@ def request_changes_on_approval(
     approval = approval_service.get_by_id(db, approval_id)
     if not approval:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found.")
-    _verify_approval_access(db, approval, current_user)
+    _verify_approval_access(db, approval, current_user, require_decision_role=True)
 
     try:
         return approval_service.request_changes(
@@ -259,7 +344,7 @@ def request_changes_on_approval(
 
 
 @router.post(
-    "/approvals/{approval_id}/reject",
+    "/approvals/{approval_id:int}/reject",
     response_model=ApprovalOut,
     summary="Reject a submitted review or rule",
 )
@@ -272,7 +357,7 @@ def reject_approval(
     approval = approval_service.get_by_id(db, approval_id)
     if not approval:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found.")
-    _verify_approval_access(db, approval, current_user)
+    _verify_approval_access(db, approval, current_user, require_decision_role=True)
 
     try:
         return approval_service.reject(
@@ -305,6 +390,12 @@ def patch_approval_legacy(
     approval = approval_service.get_by_id(db, approval_id)
     if not approval:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found.")
+
+    ws_id = approval_service.get_approval_workspace_id(db, approval)
+    if ws_id != workspace_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found in this workspace.")
+
+    _verify_approval_access(db, approval, current_user, require_decision_role=True)
 
     try:
         if decision_status == "approved":

@@ -8,6 +8,8 @@ from app.models.review import ContentReview
 from app.models.rule import BrandRule
 from app.models.activity import ReviewActivity
 from app.models.user import User
+from app.models.version import ContentVersion
+from app.models.finding import Finding
 
 
 def is_automated_submission_summary(text: Optional[str]) -> bool:
@@ -59,7 +61,12 @@ class ApprovalService:
             )
         )
         if submitted_by is not None:
-            query = query.filter(ContentReview.submitted_by == submitted_by)
+            query = query.filter(
+                or_(
+                    Approval.submitted_by == submitted_by,
+                    ContentReview.submitted_by == submitted_by,
+                )
+            )
         if status:
             query = query.filter(Approval.status == status.lower())
         return query.order_by(Approval.created_at.desc()).all()
@@ -73,7 +80,10 @@ class ApprovalService:
         reviewer_id: Optional[int] = None,
         submission_summary: Optional[str] = None,
     ) -> Approval:
-        review = db.query(ContentReview).filter(ContentReview.id == review_id).first()
+        query = db.query(ContentReview).filter(ContentReview.id == review_id)
+        if db.bind and db.bind.dialect.name == "postgresql":
+            query = query.with_for_update()
+        review = query.first()
         if not review:
             raise ValueError("Content review not found.")
 
@@ -84,17 +94,45 @@ class ApprovalService:
         current_hash = hashlib.sha256(review.content.strip().encode("utf-8")).hexdigest()
 
         audit_status = getattr(review, "audit_status", None)
-        if audit_status and audit_status != "verified":
+        if audit_status != "verified":
             raise ValueError(
                 f"Cannot request approval: Content compliance audit status is '{audit_status}'. "
                 f"Please recheck content before requesting sign-off."
             )
 
         audited_hash = getattr(review, "audited_content_hash", None)
-        if not audited_hash or audited_hash != current_hash or audit_status != "verified":
+        if not audited_hash or audited_hash != current_hash:
             raise ValueError(
                 "Cannot request approval: Current working content does not match a verified audit. "
                 "Please recheck content before requesting sign-off."
+            )
+
+        # Identify the exact current ContentVersion
+        current_ver_num = getattr(review, "current_version_number", 1) or 1
+        current_version = (
+            db.query(ContentVersion)
+            .filter(
+                ContentVersion.review_id == review.id,
+                ContentVersion.version_number == current_ver_num,
+            )
+            .first()
+        )
+        if not current_version:
+            raise ValueError(
+                f"Cannot request approval: Content version snapshot v{current_ver_num} not found. "
+                "Please re-audit content before requesting sign-off."
+            )
+
+        if current_version.content_hash != audited_hash:
+            raise ValueError(
+                "Cannot request approval: Version content hash does not match current audited content. "
+                "Please recheck content before requesting sign-off."
+            )
+
+        if current_version.audit_status != "verified":
+            raise ValueError(
+                f"Cannot request approval: Version audit status is '{current_version.audit_status}'. "
+                "Audit status must be 'verified' before requesting sign-off."
             )
 
         clean_comment = comment.strip() if comment and comment.strip() else None
@@ -106,15 +144,34 @@ class ApprovalService:
                 submission_summary = clean_comment
             clean_comment = None
 
-        # Check for existing pending approval request to prevent duplicate approval requests
-        existing_approval = (
+        # Check for existing pending approval tickets
+        existing_pending = (
             db.query(Approval)
             .filter(Approval.review_id == review.id, Approval.status == "pending")
-            .first()
+            .all()
         )
-        if existing_approval:
-            approval = existing_approval
-            approval.version_number = getattr(review, "current_version_number", 1)
+
+        same_version_ticket = None
+        for pending_ticket in existing_pending:
+            if (
+                pending_ticket.version_id == current_version.id
+                and pending_ticket.version_number == current_ver_num
+                and pending_ticket.content_hash == current_version.content_hash
+            ):
+                if same_version_ticket is None:
+                    same_version_ticket = pending_ticket
+                else:
+                    pending_ticket.status = "superseded"
+                    pending_ticket.updated_at = datetime.now(timezone.utc)
+            else:
+                # Ticket belongs to an older/different version or content hash.
+                # DO NOT modify its version_id, version_number, or content_hash.
+                # Preserve its historical binding, submitter, reviewer, and comment.
+                pending_ticket.status = "superseded"
+                pending_ticket.updated_at = datetime.now(timezone.utc)
+
+        if same_version_ticket:
+            approval = same_version_ticket
             if clean_comment:
                 approval.comment = clean_comment
             if reviewer_id:
@@ -126,7 +183,9 @@ class ApprovalService:
                 submitted_by=user.id,
                 reviewer_id=reviewer_id,
                 status="pending",
-                version_number=getattr(review, "current_version_number", 1),
+                version_id=current_version.id,
+                version_number=current_ver_num,
+                content_hash=current_version.content_hash,
                 comment=clean_comment,
             )
             db.add(approval)
@@ -252,38 +311,91 @@ class ApprovalService:
         if approval.status == "approved":
             raise ValueError("Item has already been approved.")
 
+        if approval.status != "pending":
+            raise ValueError(f"Approval ticket has status '{approval.status}' and cannot be approved.")
+
         if approval.review_id:
             review = db.query(ContentReview).filter(ContentReview.id == approval.review_id).first()
-            if review and review.status == "approved":
-                approval.status = "approved"
-                approval.reviewer_id = reviewer.id
-                db.commit()
+            if not review:
+                raise ValueError("Content review not found.")
+
+            if review.status == "approved":
                 raise ValueError("Content review has already been approved.")
 
-            # Atomic conditional update
+            # 1. Verify approval ticket is bound to an immutable version snapshot
+            if not approval.version_id:
+                raise ValueError("Cannot approve ticket: Approval ticket is not bound to a verified version snapshot.")
+
+            target_version = db.query(ContentVersion).filter(ContentVersion.id == approval.version_id).first()
+            if not target_version:
+                raise ValueError("Cannot approve ticket: Bound content version snapshot does not exist.")
+
+            # 2. Version number must match that version
+            if approval.version_number is not None and approval.version_number != target_version.version_number:
+                raise ValueError(
+                    f"Cannot approve ticket: Version number mismatch (ticket: v{approval.version_number}, snapshot: v{target_version.version_number})."
+                )
+
+            # 3. Content hash must match immutable version hash
+            if not approval.content_hash or approval.content_hash != target_version.content_hash:
+                raise ValueError("Cannot approve ticket: Approval ticket content hash does not match version snapshot hash.")
+
+            # 4. Version must still be the current review version
+            current_ver_num = getattr(review, "current_version_number", 1) or 1
+            if target_version.version_number != current_ver_num:
+                raise ValueError(
+                    f"Cannot approve stale ticket: Ticket is for version v{target_version.version_number}, but current content is v{current_ver_num}."
+                )
+
+            # 5. Current review's audited_content_hash matches approval's content_hash
+            if not review.audited_content_hash or review.audited_content_hash != approval.content_hash:
+                raise ValueError("Cannot approve ticket: Review audited content hash does not match approved ticket hash.")
+
+            # 6. Compliance audit status must be verified
+            if getattr(review, "audit_status", None) != "verified" or target_version.audit_status != "verified":
+                raise ValueError(
+                    f"Cannot approve ticket: Compliance audit status must be 'verified' (review: '{review.audit_status}', version: '{target_version.audit_status}')."
+                )
+
+            # 7. No unresolved critical findings exist for the version being approved
+            open_critical_findings = (
+                db.query(Finding)
+                .filter(
+                    Finding.review_id == review.id,
+                    or_(
+                        Finding.version_id == target_version.id,
+                        Finding.version_id.is_(None),
+                    ),
+                    Finding.severity == "critical",
+                    Finding.status == "open",
+                )
+                .all()
+            )
+            if open_critical_findings:
+                raise ValueError(
+                    f"Cannot approve review with {len(open_critical_findings)} open critical compliance violation(s). "
+                    "All critical findings must be corrected or resolved before sign-off."
+                )
+
+            # Atomic conditional update of review status
             rows = db.query(ContentReview).filter(
                 ContentReview.id == approval.review_id,
                 ContentReview.status != "approved"
             ).update({"status": "approved"}, synchronize_session=False)
 
             if rows == 0:
-                approval.status = "approved"
-                approval.reviewer_id = reviewer.id
-                db.commit()
                 raise ValueError("Content review has already been approved.")
 
-            # Update all approvals for this review
-            db.query(Approval).filter(
-                Approval.review_id == approval.review_id
-            ).update(
-                {"status": "approved", "reviewer_id": reviewer.id},
-                synchronize_session=False
-            )
+            # Update ONLY this intended approval ticket (no destructive bulk updates!)
+            approval.status = "approved"
+            approval.reviewer_id = reviewer.id
+            approval.updated_at = datetime.now(timezone.utc)
 
             # Prevent duplicate "Review approved" activity
             existing_act = db.query(ReviewActivity).filter(
                 ReviewActivity.review_id == approval.review_id,
-                ReviewActivity.action == "Review approved"
+                ReviewActivity.action == "Review approved",
+                ReviewActivity.details.like(f"%v{target_version.version_number}%")
             ).first()
 
             if not existing_act:
@@ -292,16 +404,15 @@ class ApprovalService:
                     workspace_id=review.workspace_id if review else ws_id,
                     user_id=reviewer.id,
                     action="Review approved",
-                    details=f"Approved by {reviewer.name}.",
+                    details=f"Approved by {reviewer.name} (v{target_version.version_number}).",
                 )
                 db.add(activity)
 
         elif approval.brand_rule_id:
             rule = db.query(BrandRule).filter(BrandRule.id == approval.brand_rule_id).first()
-            if rule and rule.approval_status == "approved":
-                approval.status = "approved"
-                approval.reviewer_id = reviewer.id
-                db.commit()
+            if not rule:
+                raise ValueError("Brand rule not found.")
+            if rule.approval_status == "approved":
                 raise ValueError("Brand rule has already been approved.")
 
             rule_rows = db.query(BrandRule).filter(
@@ -310,30 +421,22 @@ class ApprovalService:
             ).update({"approval_status": "approved"}, synchronize_session=False)
 
             if rule_rows == 0:
-                approval.status = "approved"
-                approval.reviewer_id = reviewer.id
-                db.commit()
                 raise ValueError("Brand rule has already been approved.")
 
-            existing_act = db.query(ReviewActivity).filter(
-                ReviewActivity.workspace_id == ws_id,
-                ReviewActivity.action == "Brand rule approved",
-                ReviewActivity.details.like(f"%'{rule.title}' approved%") if rule else ReviewActivity.details.like(f"%Rule {approval.brand_rule_id}%")
-            ).first()
+            approval.status = "approved"
+            approval.reviewer_id = reviewer.id
+            approval.updated_at = datetime.now(timezone.utc)
 
-            if not existing_act:
-                rule_title = rule.title if rule else f"Rule {approval.brand_rule_id}"
-                activity = ReviewActivity(
-                    review_id=None,
-                    workspace_id=ws_id,
-                    user_id=reviewer.id,
-                    action="Brand rule approved",
-                    details=f"Rule '{rule_title}' approved as official brand knowledge by {reviewer.name}.",
-                )
-                db.add(activity)
+            rule_title = rule.title if rule else f"Rule {approval.brand_rule_id}"
+            activity = ReviewActivity(
+                review_id=None,
+                workspace_id=ws_id,
+                user_id=reviewer.id,
+                action="Brand rule approved",
+                details=f"Rule '{rule_title}' approved as official brand knowledge by {reviewer.name}.",
+            )
+            db.add(activity)
 
-        approval.status = "approved"
-        approval.reviewer_id = reviewer.id
         db.commit()
         db.refresh(approval)
         return approval
@@ -357,33 +460,38 @@ class ApprovalService:
         if approval.status == "approved":
             raise ValueError("Cannot request changes on an already approved item.")
 
+        if approval.status != "pending":
+            raise ValueError(f"Cannot request changes on a ticket with status '{approval.status}'.")
+
         if approval.review_id:
             review = db.query(ContentReview).filter(ContentReview.id == approval.review_id).first()
-            if review and review.status == "approved":
+            if not review:
+                raise ValueError("Content review not found.")
+            if review.status == "approved":
                 raise ValueError("Cannot request changes on an already approved review.")
 
-            is_already_revision = (review.status == "needs_revision") if review else False
-            if review:
-                review.status = "needs_revision"
+            review.status = "needs_revision"
 
+            # Update ONLY the intended pending ticket
             approval.status = "changes_requested"
             approval.comment = clean_comment
             approval.reviewer_id = reviewer.id
+            approval.updated_at = datetime.now(timezone.utc)
 
-            if not is_already_revision:
-                activity = ReviewActivity(
-                    review_id=review.id,
-                    workspace_id=review.workspace_id,
-                    user_id=reviewer.id,
-                    action="Changes requested",
-                    details=clean_comment,
-                )
-                db.add(activity)
+            activity = ReviewActivity(
+                review_id=review.id,
+                workspace_id=review.workspace_id,
+                user_id=reviewer.id,
+                action="Changes requested",
+                details=clean_comment,
+            )
+            db.add(activity)
 
         elif approval.brand_rule_id:
             approval.status = "changes_requested"
             approval.comment = clean_comment
             approval.reviewer_id = reviewer.id
+            approval.updated_at = datetime.now(timezone.utc)
 
         db.commit()
         db.refresh(approval)
@@ -408,51 +516,54 @@ class ApprovalService:
         if approval.status == "approved":
             raise ValueError("Cannot reject an already approved item.")
 
+        if approval.status != "pending":
+            raise ValueError(f"Cannot reject a ticket with status '{approval.status}'.")
+
         if approval.review_id:
             review = db.query(ContentReview).filter(ContentReview.id == approval.review_id).first()
-            if review and review.status == "approved":
+            if not review:
+                raise ValueError("Content review not found.")
+            if review.status == "approved":
                 raise ValueError("Cannot reject an already approved review.")
 
-            is_already_rejected = (review.status == "rejected") if review else False
-            if review:
-                review.status = "rejected"
+            review.status = "rejected"
 
+            # Update ONLY the intended pending ticket
             approval.status = "rejected"
             approval.comment = clean_reason
             approval.reviewer_id = reviewer.id
+            approval.updated_at = datetime.now(timezone.utc)
 
-            if not is_already_rejected:
-                activity = ReviewActivity(
-                    review_id=review.id,
-                    workspace_id=review.workspace_id,
-                    user_id=reviewer.id,
-                    action="Review rejected",
-                    details=clean_reason,
-                )
-                db.add(activity)
+            activity = ReviewActivity(
+                review_id=review.id,
+                workspace_id=review.workspace_id,
+                user_id=reviewer.id,
+                action="Review rejected",
+                details=clean_reason,
+            )
+            db.add(activity)
 
         elif approval.brand_rule_id:
             rule = db.query(BrandRule).filter(BrandRule.id == approval.brand_rule_id).first()
-            if rule and rule.approval_status == "approved":
+            if not rule:
+                raise ValueError("Brand rule not found.")
+            if rule.approval_status == "approved":
                 raise ValueError("Cannot reject an already approved brand rule.")
 
-            is_already_rejected = (rule.approval_status == "rejected") if rule else False
-            if rule:
-                rule.approval_status = "rejected"
-
+            rule.approval_status = "rejected"
             approval.status = "rejected"
             approval.comment = clean_reason
             approval.reviewer_id = reviewer.id
+            approval.updated_at = datetime.now(timezone.utc)
 
-            if not is_already_rejected:
-                activity = ReviewActivity(
-                    review_id=None,
-                    workspace_id=ws_id,
-                    user_id=reviewer.id,
-                    action="Brand rule rejected",
-                    details=clean_reason,
-                )
-                db.add(activity)
+            activity = ReviewActivity(
+                review_id=None,
+                workspace_id=ws_id,
+                user_id=reviewer.id,
+                action="Brand rule rejected",
+                details=clean_reason,
+            )
+            db.add(activity)
 
         db.commit()
         db.refresh(approval)

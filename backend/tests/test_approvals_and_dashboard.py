@@ -37,7 +37,7 @@ def test_approvals_workflow_and_dashboard(client, auth_headers):
         f"/api/workspaces/{ws_id}/reviews",
         json={
             "title": "Spring Product Announcement",
-            "content": "Our solution protects against unverified threats in real-time.",
+            "content": "Our solution protects against emerging security threats in real-time.",
             "content_type": "blog",
         },
         headers=auth_headers,

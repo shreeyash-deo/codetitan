@@ -1,6 +1,6 @@
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Optional, Any
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.schemas.user import UserOut
 
 
@@ -23,10 +23,29 @@ class RequestApprovalPayload(BaseModel):
 
 class RequestChangesPayload(BaseModel):
     comment: str = Field(..., min_length=1, description="Mandatory revision instructions")
+    revisionNotes: Optional[str] = None
+    notes: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_comment(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "comment" not in data:
+            c = data.get("revisionNotes") or data.get("notes") or ""
+            data["comment"] = str(c).strip()
+        return data
 
 
 class RejectApprovalPayload(BaseModel):
     reason: str = Field(..., min_length=1, description="Mandatory rejection reason")
+    comment: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_reason(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "reason" not in data:
+            r = data.get("comment") or ""
+            data["reason"] = str(r).strip()
+        return data
 
 
 class ApprovalOut(ApprovalBase):
@@ -36,9 +55,12 @@ class ApprovalOut(ApprovalBase):
     submitted_by: Optional[int] = None
     reviewer_id: Optional[int] = None
     version_number: Optional[int] = None
+    version_id: Optional[int] = None
+    content_hash: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     submitter: Optional[UserOut] = None
     reviewer: Optional[UserOut] = None
+    success: bool = True
 
     model_config = ConfigDict(from_attributes=True)

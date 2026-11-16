@@ -144,13 +144,13 @@ app.add_middleware(
 app.include_router(health.router)
 
 # Core API Endpoints under /api
+app.include_router(approvals.router, prefix="/api")
 app.include_router(compat.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(workspaces.router, prefix="/api")
 app.include_router(guidelines.router, prefix="/api")
 app.include_router(rules.router, prefix="/api")
 app.include_router(reviews.router, prefix="/api")
-app.include_router(approvals.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 
 # Also mount under /api/v1 for frontend client compatibility

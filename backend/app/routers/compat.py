@@ -899,69 +899,42 @@ def get_pending_approvals(
     return results
 
 
-@router.post("/approvals/{item_id}/approve", summary="Approve review or approval ticket")
+@router.post("/approvals/{review_id:int}/approve", summary="Approve content review")
 def approve_content_by_item(
-    item_id: str,
+    review_id: int,
     payload: Optional[Dict[str, Any]] = Body(default_factory=dict),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    try:
-        parsed_id = int(item_id)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid approval/review ID")
-
     comment = (payload or {}).get("comment")
 
-    # 1. Check if ID matches a ContentReview directly (standard path from frontend governance desk)
-    review = db.query(ContentReview).filter(ContentReview.id == parsed_id).first()
-    if review:
-        verify_workspace_reviewer_or_admin_in_compat(db, review.workspace_id, current_user.id)
+    review = db.query(ContentReview).filter(ContentReview.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content review not found.")
 
-        if review.status == "approved":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Content review has already been approved.",
-            )
+    verify_workspace_reviewer_or_admin_in_compat(db, review.workspace_id, current_user.id)
 
-        # Atomic conditional update ensures only one concurrent request transitions state
-        rows = db.query(ContentReview).filter(
-            ContentReview.id == review.id,
-            ContentReview.status != "approved"
-        ).update({"status": "approved"}, synchronize_session=False)
-
-        if rows == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Content review has already been approved.",
-            )
-
-        # Update all associated approval records for this review
-        db.query(Approval).filter(
-            Approval.review_id == review.id
-        ).update(
-            {"status": "approved", "reviewer_id": current_user.id, "comment": comment},
-            synchronize_session=False
+    if review.status == "approved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Content review has already been approved.",
         )
 
-        # Prevent duplicate approval activity record
-        existing_act = db.query(ReviewActivity).filter(
-            ReviewActivity.review_id == review.id,
-            ReviewActivity.action == "Review approved"
-        ).first()
+    # Route through ApprovalService to enforce version binding, verified audit, and critical findings checks
+    approval = (
+        db.query(Approval)
+        .filter(Approval.review_id == review.id, Approval.status == "pending")
+        .order_by(Approval.created_at.desc())
+        .first()
+    )
+    if not approval:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No pending approval request found for this review. Sign-off must be requested before approval.",
+        )
 
-        if not existing_act:
-            activity = ReviewActivity(
-                review_id=review.id,
-                workspace_id=review.workspace_id,
-                user_id=current_user.id,
-                action="Review approved",
-                details=comment or f"Certified and approved by {current_user.name}.",
-            )
-            db.add(activity)
-
-        db.commit()
-
+    try:
+        approved_obj = approval_service.approve(db=db, approval=approval, reviewer=current_user)
         return {
             "id": review.id,
             "status": "approved",
@@ -969,51 +942,35 @@ def approve_content_by_item(
             "certificateId": f"CERT-BS-2026-{1000 + review.id}",
             "review_id": review.id,
         }
-
-    # 2. Check if ID matches an Approval ticket (e.g. brand rule approval or ticket-scoped endpoint)
-    approval = db.query(Approval).filter(Approval.id == parsed_id).first()
-    if approval:
-        ws_id = approval_service.get_approval_workspace_id(db, approval)
-        if ws_id is not None:
-            verify_workspace_reviewer_or_admin_in_compat(db, ws_id, current_user.id)
-        try:
-            approved_obj = approval_service.approve(db=db, approval=approval, reviewer=current_user)
-            rev_id = approval.review_id or approval.id
-            return {
-                "id": approved_obj.id,
-                "status": "approved",
-                "success": True,
-                "certificateId": f"CERT-BS-2026-{1000 + rev_id}",
-                "review_id": approval.review_id,
-            }
-        except PermissionError as perm_err:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(perm_err))
-        except ValueError as err:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
-
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request or review not found")
+    except PermissionError as perm_err:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(perm_err))
+    except ValueError as val_err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err))
 
 
-@router.post("/approvals/{review_id}/request-changes", summary="Request changes on review")
+@router.post("/approvals/{review_id:int}/request-changes", summary="Request changes on review")
 def request_changes_by_review(
-    review_id: str,
+    review_id: int,
     payload: Dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    try:
-        r_id = int(review_id)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid review ID")
+    notes = (
+        payload.get("revisionNotes")
+        or payload.get("comment")
+        or payload.get("notes")
+        or ""
+    )
+    clean_notes = str(notes).strip()
+    if not clean_notes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Requesting changes requires specific feedback instructions.",
+        )
 
-    review = review_service.get_by_id(db, r_id)
+    review = review_service.get_by_id(db, review_id)
     if not review:
-        approval = db.query(Approval).filter(Approval.id == r_id).first()
-        if approval and approval.review_id:
-            review = review_service.get_by_id(db, approval.review_id)
-
-    if not review:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content review not found.")
 
     verify_workspace_reviewer_or_admin_in_compat(db, review.workspace_id, current_user.id)
 
@@ -1023,59 +980,124 @@ def request_changes_by_review(
             detail="Cannot request changes on an already approved review.",
         )
 
-    notes = payload.get("revisionNotes") or payload.get("comment") or payload.get("notes") or "Changes requested by reviewer."
-    clean_notes = str(notes).strip()
-    if not clean_notes:
+    target_approval = (
+        db.query(Approval)
+        .filter(Approval.review_id == review.id, Approval.status == "pending")
+        .order_by(Approval.created_at.desc())
+        .first()
+    )
+    if target_approval:
+        try:
+            approval_service.request_changes(
+                db=db, approval=target_approval, reviewer=current_user, comment=clean_notes
+            )
+            return {
+                "success": True,
+                "status": "needs_changes",
+                "reviewId": str(review.id),
+            }
+        except PermissionError as perm_err:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(perm_err))
+        except ValueError as val_err:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err))
+
+    # Idempotent retry: if this review already has a changes_requested ticket, update comment
+    existing_req = (
+        db.query(Approval)
+        .filter(Approval.review_id == review.id, Approval.status == "changes_requested")
+        .order_by(Approval.created_at.desc())
+        .first()
+    )
+    if existing_req:
+        existing_req.comment = clean_notes
+        existing_req.reviewer_id = current_user.id
+        db.commit()
+        return {
+            "success": True,
+            "status": "needs_changes",
+            "reviewId": str(review.id),
+        }
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="No pending approval request found for this review.",
+    )
+
+
+@router.post("/approvals/{review_id:int}/reject", summary="Reject review")
+def reject_content_by_item(
+    review_id: int,
+    payload: Optional[Dict[str, Any]] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    reason = (
+        (payload or {}).get("reason")
+        or (payload or {}).get("comment")
+        or "Rejected by reviewer"
+    )
+    clean_reason = str(reason).strip()
+    if not clean_reason:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Requesting changes requires specific feedback instructions.",
+            detail="Rejection requires a documented reason.",
         )
 
-    is_already_needs_revision = (review.status == "needs_revision")
+    review = db.query(ContentReview).filter(ContentReview.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content review not found.")
 
-    review.status = "needs_revision"
+    verify_workspace_reviewer_or_admin_in_compat(db, review.workspace_id, current_user.id)
 
-    open_approvals = db.query(Approval).filter(
-        Approval.review_id == review.id,
-        Approval.status.in_(["pending", "changes_requested"])
-    ).all()
-    for appr in open_approvals:
-        appr.status = "changes_requested"
-        appr.reviewer_id = current_user.id
-        appr.comment = clean_notes
-
-    # Prevent duplicate activity events on double-click or repeat request-changes
-    if not is_already_needs_revision:
-        activity = ReviewActivity(
-            review_id=review.id,
-            workspace_id=review.workspace_id,
-            user_id=current_user.id,
-            action="Changes requested",
-            details=clean_notes,
+    if review.status == "approved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot reject an already approved review.",
         )
-        db.add(activity)
+    if review.status == "rejected":
+        return {
+            "id": review.id,
+            "status": "rejected",
+            "success": True,
+            "review_id": review.id,
+        }
 
-    db.commit()
+    target_approval = (
+        db.query(Approval)
+        .filter(Approval.review_id == review.id, Approval.status == "pending")
+        .order_by(Approval.created_at.desc())
+        .first()
+    )
+    if not target_approval:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No pending approval request found for this review.",
+        )
 
-    return {
-        "success": True,
-        "status": "needs_changes",
-        "reviewId": str(review.id),
-    }
+    try:
+        rejected_obj = approval_service.reject(
+            db=db, approval=target_approval, reviewer=current_user, reason=clean_reason
+        )
+        return {
+            "id": review.id,
+            "status": "rejected",
+            "success": True,
+            "review_id": review.id,
+        }
+    except PermissionError as perm_err:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(perm_err))
+    except ValueError as val_err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err))
 
 
-@router.post("/approvals/{review_id}/comments", summary="Add comment to review")
+@router.post("/approvals/{review_id:int}/comments", summary="Add comment to review")
 def add_review_comment(
-    review_id: str,
+    review_id: int,
     payload: Dict[str, Any] = Body(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    try:
-        r_id = int(review_id)
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid review ID")
-
+    r_id = review_id
     review = review_service.get_by_id(db, r_id)
     if not review:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")

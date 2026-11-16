@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from app.models.review import ContentReview
     from app.models.rule import BrandRule
     from app.models.user import User
+    from app.models.version import ContentVersion
 
 
 class Approval(Base):
@@ -28,6 +29,10 @@ class Approval(Base):
     )
     status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False, index=True)
     version_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    version_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("content_versions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -44,4 +49,7 @@ class Approval(Base):
     )
     reviewer: Mapped[Optional["User"]] = relationship(
         "User", foreign_keys=[reviewer_id], back_populates="reviewed_approvals"
+    )
+    version: Mapped[Optional["ContentVersion"]] = relationship(
+        "ContentVersion", foreign_keys=[version_id]
     )
