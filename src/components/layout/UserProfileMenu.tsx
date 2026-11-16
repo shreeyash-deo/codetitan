@@ -32,12 +32,13 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ collapsed = fa
 
   if (!user) return null
 
-  const initials = user.name
+  const initials = (user.name || user.email || 'User')
     .split(' ')
+    .filter(Boolean)
     .map((n) => n[0])
     .join('')
-    .substring(0, 2)
-    .toUpperCase()
+    .slice(0, 2)
+    .toUpperCase() || 'US'
 
   const activeRole = currentWorkspace?.role || user.role || 'Member'
 

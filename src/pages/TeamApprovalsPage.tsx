@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { RequestChangesDialog } from '@/components/approvals/RequestChangesDialog'
 import { AddCommentDialog } from '@/components/approvals/AddCommentDialog'
 import { ReviewDetailReportModal } from '@/components/history/ReviewDetailReportModal'
+import { VersionHistoryModal } from '@/components/studio/VersionHistoryModal'
 import { useGovernance } from '@/context/GovernanceContext'
 import { useWorkspace } from '@/hooks/useWorkspace'
 import { useAuth } from '@/context/AuthContext'
@@ -28,6 +29,7 @@ import {
   Users,
   Shield,
   Copy,
+  History,
   X,
   Check,
   ShieldAlert,
@@ -49,6 +51,7 @@ export const TeamApprovalsPage: React.FC = () => {
   const [targetReviewForChanges, setTargetReviewForChanges] = useState<HistoricalReviewRecord | null>(null)
   const [targetReviewForComment, setTargetReviewForComment] = useState<HistoricalReviewRecord | null>(null)
   const [selectedReviewForModal, setSelectedReviewForModal] = useState<HistoricalReviewRecord | null>(null)
+  const [versionHistoryReview, setVersionHistoryReview] = useState<HistoricalReviewRecord | null>(null)
 
   // Team & Member Access state
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([])
@@ -413,6 +416,11 @@ export const TeamApprovalsPage: React.FC = () => {
                         <Badge variant="outline" className="text-[10px]">
                           {item.contentType}
                         </Badge>
+                        {(item as any).versionNumber && (
+                          <Badge variant="outline" className="text-[10px] bg-slate-100 text-slate-700 font-mono font-semibold">
+                            v{(item as any).versionNumber}
+                          </Badge>
+                        )}
                         <span className="text-[11px] text-slate-400 font-mono">
                           Submitted {item.reviewDate}
                         </span>
@@ -453,33 +461,33 @@ export const TeamApprovalsPage: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-lg bg-slate-50/70 border border-slate-200/80 text-xs">
                     <div className="flex items-center gap-2.5">
                       <Avatar className="w-6 h-6">
-                        <AvatarImage src={item.submittedBy.avatar} />
-                        <AvatarFallback>{item.submittedBy.name.substring(0, 2)}</AvatarFallback>
+                        <AvatarImage src={item.submittedBy?.avatar} />
+                        <AvatarFallback>{item.submittedBy?.name?.slice(0, 2) || 'AU'}</AvatarFallback>
                       </Avatar>
                       <div>
                         <span className="text-[10px] text-slate-400 uppercase font-semibold block">
                           Content Creator
                         </span>
                         <span className="font-semibold text-slate-800">
-                          {item.submittedBy.name}
+                          {item.submittedBy?.name || 'Unknown'}
                         </span>
-                        <span className="text-slate-400 text-[11px] ml-1">({item.submittedBy.role})</span>
+                        <span className="text-slate-400 text-[11px] ml-1">({item.submittedBy?.role || 'Creator'})</span>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2.5">
                       <Avatar className="w-6 h-6">
-                        <AvatarImage src={item.assignedReviewer.avatar} />
-                        <AvatarFallback>{item.assignedReviewer.name.substring(0, 2)}</AvatarFallback>
+                        <AvatarImage src={item.assignedReviewer?.avatar} />
+                        <AvatarFallback>{item.assignedReviewer?.name?.slice(0, 2) || 'RV'}</AvatarFallback>
                       </Avatar>
                       <div>
                         <span className="text-[10px] text-slate-400 uppercase font-semibold block">
                           Assigned Reviewer
                         </span>
                         <span className="font-semibold text-slate-800">
-                          {item.assignedReviewer.name}
+                          {item.assignedReviewer?.name || 'Unassigned'}
                         </span>
-                        <span className="text-slate-400 text-[11px] ml-1">({item.assignedReviewer.role})</span>
+                        <span className="text-slate-400 text-[11px] ml-1">({item.assignedReviewer?.role || 'Reviewer'})</span>
                       </div>
                     </div>
                   </div>
@@ -491,15 +499,27 @@ export const TeamApprovalsPage: React.FC = () => {
 
                   {/* Action Buttons */}
                   <div className="pt-2 border-t border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5 text-xs text-slate-600 hover:text-slate-900 cursor-pointer"
-                      onClick={() => setSelectedReviewForModal(item)}
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>Inspect Audit & Timeline</span>
-                    </Button>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 text-xs text-slate-600 hover:text-slate-900 cursor-pointer"
+                        onClick={() => setSelectedReviewForModal(item)}
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Inspect Audit & Timeline</span>
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 text-xs text-blue-700 border-blue-200 hover:bg-blue-50 cursor-pointer"
+                        onClick={() => setVersionHistoryReview(item)}
+                      >
+                        <History className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Version History</span>
+                      </Button>
+                    </div>
 
                     <div className="flex items-center gap-2 flex-wrap self-end sm:self-auto">
                       <Button
@@ -562,7 +582,7 @@ export const TeamApprovalsPage: React.FC = () => {
                   className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm text-white shrink-0"
                   style={{ backgroundColor: currentWorkspace?.color || '#0284c7' }}
                 >
-                  {currentWorkspace?.name?.substring(0, 2).toUpperCase()}
+                  {(currentWorkspace?.name || 'WS').slice(0, 2).toUpperCase()}
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -626,7 +646,7 @@ export const TeamApprovalsPage: React.FC = () => {
                       <div className="flex items-center gap-3">
                         <Avatar className="w-8 h-8">
                           <AvatarFallback className="bg-amber-100 text-amber-800 text-xs font-bold">
-                            {req.name.substring(0, 2).toUpperCase()}
+                            {(req.name || 'UR').slice(0, 2).toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
                         <div>
@@ -703,7 +723,7 @@ export const TeamApprovalsPage: React.FC = () => {
                       <div className="flex items-center gap-3">
                         <Avatar className="w-8 h-8">
                           <AvatarFallback className="bg-slate-100 text-slate-700 text-xs font-bold">
-                            {memberName.substring(0, 2).toUpperCase()}
+                            {(memberName || 'MB').slice(0, 2).toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
                         <div>
@@ -802,6 +822,14 @@ export const TeamApprovalsPage: React.FC = () => {
         isOpen={Boolean(selectedReviewForModal)}
         onClose={() => setSelectedReviewForModal(null)}
         onAddComment={addComment}
+      />
+
+      {/* Standalone Version History Modal */}
+      <VersionHistoryModal
+        reviewId={versionHistoryReview?.id ? String(versionHistoryReview.id).replace(/\D/g, '') || versionHistoryReview.id : null}
+        reviewTitle={versionHistoryReview?.title}
+        isOpen={Boolean(versionHistoryReview)}
+        onClose={() => setVersionHistoryReview(null)}
       />
     </motion.div>
   )

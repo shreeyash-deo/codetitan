@@ -139,6 +139,10 @@ export interface ReviewResult {
   overallScore: number
   issuesCount: number
   status: 'approved' | 'in_review' | 'flagged' | 'rejected' | 'rules_unavailable'
+  auditStatus?: 'verified' | 'degraded' | 'pending' | 'stale' | 'failed' | 'rules_unavailable' | string
+  auditedContentHash?: string | null
+  auditedAt?: string | null
+  currentVersionNumber?: number
   hasApprovedRules?: boolean
   summary: string
   contentPreview: string
@@ -230,6 +234,7 @@ export interface ReviewHistory {
   violationsCount: number
   reviewDate: string
   approvalStatus: ApprovalStatusType
+  currentVersionNumber?: number
   originalContent: string
   correctedContent: string
   findings: ComplianceFinding[]

@@ -148,13 +148,13 @@ export const RecentReviewsTable: React.FC<RecentReviewsTableProps> = ({
                       <td className="px-4 py-3.5 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <Avatar className="w-5 h-5 shrink-0">
-                            <AvatarImage src={rev.author.avatar} alt={rev.author.name} />
+                            <AvatarImage src={rev.author?.avatar} alt={rev.author?.name} />
                             <AvatarFallback className="text-[9px]">
-                              {rev.author.name.substring(0, 2)}
+                              {(rev.author?.name || 'AU').slice(0, 2)}
                             </AvatarFallback>
                           </Avatar>
                           <span className="text-slate-700 font-medium truncate">
-                            {rev.author.name}
+                            {rev.author?.name || 'Unknown'}
                           </span>
                         </div>
                       </td>

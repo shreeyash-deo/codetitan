@@ -15,6 +15,7 @@ import { AnalysisProgressOverlay } from '@/components/studio/AnalysisProgressOve
 import { FindingCard } from '@/components/studio/FindingCard'
 import { GuidelineInspectorDrawer } from '@/components/studio/GuidelineInspectorDrawer'
 import { CompareDiffModal } from '@/components/studio/CompareDiffModal'
+import { VersionHistoryModal } from '@/components/studio/VersionHistoryModal'
 import { ExportReportModal } from '@/components/studio/ExportReportModal'
 import { studioPresets } from '@/data/mockStudioPresets'
 import { reviewService, apiClient } from '@/services'
@@ -32,6 +33,7 @@ import {
   AlertTriangle,
   FileCheck2,
   GitCompare,
+  History,
   Download,
   Send,
   Save,
@@ -63,6 +65,7 @@ export const ContentReviewPage: React.FC = () => {
   const [realBackendScore, setRealBackendScore] = useState<number | null>(null)
   const [realSummary, setRealSummary] = useState<string | null>(null)
   const [lastAuditedContent, setLastAuditedContent] = useState<string | null>(null)
+  const [currentVersionNumber, setCurrentVersionNumber] = useState<number>(1)
 
   // Configuration options
   const [strictness, setStrictness] = useState<StrictnessLevel>('standard')
@@ -81,6 +84,9 @@ export const ContentReviewPage: React.FC = () => {
   const [selectedGuideline, setSelectedGuideline] = useState<SupportingGuideline | null>(null)
   const [isGuidelineDrawerOpen, setIsGuidelineDrawerOpen] = useState(false)
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false)
+  const [isVersionHistoryOpen, setIsVersionHistoryOpen] = useState(false)
+  const [compareSourceVer, setCompareSourceVer] = useState<number | undefined>(undefined)
+  const [compareTargetVer, setCompareTargetVer] = useState<number | undefined>(undefined)
   const [isExportModalOpen, setIsExportModalOpen] = useState(false)
   const [selectedFilterCategory, setSelectedFilterCategory] = useState<string>('all')
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null)
@@ -199,6 +205,16 @@ export const ContentReviewPage: React.FC = () => {
           return
         }
 
+        if (data.audit_status === 'degraded') {
+          setFindings(mapBackendFindings(data.findings || []))
+          setStudioState('results')
+          warning(
+            data.summary || 'Semantic AI analysis was unavailable. Audit completed in degraded deterministic mode.',
+            'Degraded Audit'
+          )
+          return
+        }
+
         setFindings(mapBackendFindings(data.findings || []))
         setStudioState('results')
         success(`Recheck completed. Verified compliance score: ${data.compliance_score}/100.`, 'Analysis Verified')
@@ -226,6 +242,16 @@ export const ContentReviewPage: React.FC = () => {
         warning(
           result.summary || 'Brand rules unavailable in this organisation. Please approve brand rules before auditing.',
           'Incomplete Audit'
+        )
+        return
+      }
+
+      if (result.auditStatus === 'degraded') {
+        setFindings(mapBackendFindings(result.findings || []))
+        setStudioState('results')
+        warning(
+          result.summary || 'Semantic AI analysis was unavailable. Audit completed in degraded deterministic mode.',
+          'Degraded Audit'
         )
         return
       }
@@ -803,7 +829,21 @@ export const ContentReviewPage: React.FC = () => {
                 variant="outline"
                 size="sm"
                 className="gap-1.5"
-                onClick={() => setIsCompareModalOpen(true)}
+                onClick={() => setIsVersionHistoryOpen(true)}
+              >
+                <History className="w-3.5 h-3.5 text-slate-600" />
+                <span>Version History</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => {
+                  setCompareSourceVer(undefined)
+                  setCompareTargetVer(undefined)
+                  setIsCompareModalOpen(true)
+                }}
               >
                 <GitCompare className="w-3.5 h-3.5 text-slate-600" />
                 <span>Compare Versions</span>
@@ -1031,7 +1071,21 @@ export const ContentReviewPage: React.FC = () => {
                         variant="outline"
                         size="sm"
                         className="h-7 text-[11px] gap-1"
-                        onClick={() => setIsCompareModalOpen(true)}
+                        onClick={() => setIsVersionHistoryOpen(true)}
+                      >
+                        <History className="w-3 h-3 text-slate-600" />
+                        <span>Version History</span>
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px] gap-1"
+                        onClick={() => {
+                          setCompareSourceVer(undefined)
+                          setCompareTargetVer(undefined)
+                          setIsCompareModalOpen(true)
+                        }}
                       >
                         <GitCompare className="w-3 h-3" />
                         <span>Compare Diff</span>
@@ -1233,6 +1287,21 @@ export const ContentReviewPage: React.FC = () => {
         onClose={() => setIsGuidelineDrawerOpen(false)}
       />
 
+      {/* Version History Modal */}
+      <VersionHistoryModal
+        reviewId={activeReviewId || undefined}
+        reviewTitle={title}
+        currentVersionNumber={currentVersionNumber}
+        isOpen={isVersionHistoryOpen}
+        onClose={() => setIsVersionHistoryOpen(false)}
+        onCompareVersions={(src, tgt) => {
+          setCompareSourceVer(src)
+          setCompareTargetVer(tgt)
+          setIsVersionHistoryOpen(false)
+          setIsCompareModalOpen(true)
+        }}
+      />
+
       {/* Version Comparison / Diff Modal */}
       <CompareDiffModal
         originalContent={originalContent}
@@ -1241,6 +1310,10 @@ export const ContentReviewPage: React.FC = () => {
         onClose={() => setIsCompareModalOpen(false)}
         scoreBefore={realBackendScore !== null ? realBackendScore : (totalFindings === 0 ? 100 : 0)}
         scoreAfter={currentScore}
+        reviewId={activeReviewId || undefined}
+        currentVersionNumber={currentVersionNumber}
+        initialSourceVersion={compareSourceVer}
+        initialTargetVersion={compareTargetVer}
       />
 
       {/* Export Report Modal */}

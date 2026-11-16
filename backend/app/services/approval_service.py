@@ -114,6 +114,7 @@ class ApprovalService:
         )
         if existing_approval:
             approval = existing_approval
+            approval.version_number = getattr(review, "current_version_number", 1)
             if clean_comment:
                 approval.comment = clean_comment
             if reviewer_id:
@@ -125,6 +126,7 @@ class ApprovalService:
                 submitted_by=user.id,
                 reviewer_id=reviewer_id,
                 status="pending",
+                version_number=getattr(review, "current_version_number", 1),
                 comment=clean_comment,
             )
             db.add(approval)

@@ -58,7 +58,7 @@ export const WorkspaceSwitcher: React.FC<WorkspaceSwitcherProps> = ({ collapsed 
                 className="flex items-center justify-center w-6 h-6 rounded-md text-[11px] font-bold text-white shrink-0 shadow-xs"
                 style={{ backgroundColor: currentWorkspace.color }}
               >
-                {currentWorkspace.name.substring(0, 2).toUpperCase()}
+                {(currentWorkspace?.name || 'WS').slice(0, 2).toUpperCase()}
               </div>
               {!collapsed && (
                 <div className="flex flex-col min-w-0 text-left">
@@ -119,7 +119,7 @@ export const WorkspaceSwitcher: React.FC<WorkspaceSwitcherProps> = ({ collapsed 
                     className="flex items-center justify-center w-6 h-6 rounded text-[11px] font-bold text-white shrink-0"
                     style={{ backgroundColor: ws.color }}
                   >
-                    {ws.name.substring(0, 2).toUpperCase()}
+                    {(ws.name || 'WS').slice(0, 2).toUpperCase()}
                   </div>
                   <div className="flex flex-col min-w-0">
                     <div className="flex items-center gap-1.5">

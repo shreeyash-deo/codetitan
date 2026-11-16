@@ -75,3 +75,19 @@ def auth_headers(test_user) -> dict:
         extra_claims={"role": test_user.role, "email": test_user.email},
     )
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(autouse=True)
+def mock_default_gemini_call():
+    """
+    Prevent exhausting real third-party Gemini Free Tier quota during test runs.
+    Specific tests can override this by nesting their own patch of call_gemini.
+    """
+    import json
+    from unittest.mock import patch
+    default_payload = json.dumps({
+        "summary": "AI compliance scan verified content against approved guidelines.",
+        "findings": [],
+    })
+    with patch("app.services.compliance.ai_checker.AIChecker.call_gemini", return_value=default_payload):
+        yield

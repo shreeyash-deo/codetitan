@@ -20,5 +20,6 @@ class FindingCreate(FindingBase):
 class FindingOut(FindingBase):
     id: int
     review_id: int
+    version_id: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)

@@ -182,8 +182,9 @@ def test_manual_edit_via_patch_triggers_recalculation(client, db):
     assert patched_data["audit_status"] == "verified"
     assert patched_data["audited_content_hash"] == hashlib.sha256(clean_content.strip().encode("utf-8")).hexdigest()
 
-    # Verify findings were refreshed
-    open_findings = db.query(Finding).filter(Finding.review_id == review_id, Finding.status == "open").all()
+    # Verify findings were refreshed for current review version
+    db_rev = db.query(ContentReview).filter(ContentReview.id == review_id).first()
+    open_findings = [f for f in db_rev.findings if f.status == "open"]
     assert len(open_findings) == 0
 
 

@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from app.models.rule import BrandRule
 from app.schemas.finding import FindingCreate
 
@@ -9,10 +9,184 @@ logger = logging.getLogger("brandshield.compliance.deterministic")
 
 class DeterministicChecker:
     @staticmethod
+    def extract_rule_severity(rule: BrandRule, default: str = "major") -> str:
+        """
+        Dynamically derive severity level from rule attributes, description, or title.
+        Never hardcode brand-specific rules to fixed severities.
+        """
+        raw_sev = getattr(rule, "severity", None)
+        if raw_sev and str(raw_sev).lower() in ("critical", "major", "minor", "suggestion"):
+            return str(raw_sev).lower()
+
+        combined_text = f"{rule.title} {rule.description}".lower()
+        if any(k in combined_text for k in ("critical", "statutory", "must never", "strictly prohibited", "mandatory", "non-negotiable")):
+            return "critical"
+        if any(k in combined_text for k in ("minor", "low priority", "guideline only", "advisory")):
+            return "minor"
+        if any(k in combined_text for k in ("suggestion", "optional", "recommended")):
+            return "suggestion"
+        return default
+
+    @staticmethod
     def extract_quoted_terms(text: str) -> List[str]:
         """Extract strings wrapped in single or double quotes (supporting disclaimers up to 1000 chars)."""
         terms = re.findall(r"['\"]([^'\"]{2,1000})['\"]", text)
         return [t.strip() for t in terms if t.strip()]
+
+    @classmethod
+    def get_sentence_context(cls, content: str, start: int, end: int) -> Tuple[str, str, str]:
+        """
+        Returns (sentence, pre_in_sentence, post_in_sentence) around the match span [start, end].
+        Correctly detects sentence boundaries using punctuation (. ! ?) and line breaks.
+        """
+        left_text = content[:start]
+        s_start = 0
+        for m in re.finditer(r"(?:[.!?]\s+|\n+)", left_text):
+            s_start = m.end()
+
+        right_text = content[end:]
+        m_end = re.search(r"(?:[.!?](?:\s+|$)|[\n\r]+)", right_text)
+        s_end = end + m_end.start() + 1 if m_end else len(content)
+
+        sentence = content[s_start:s_end].strip()
+        pre_in_sentence = content[s_start:start]
+        post_in_sentence = content[end:s_end]
+        return sentence, pre_in_sentence, post_in_sentence
+
+    @classmethod
+    def is_negated_or_cautionary(
+        cls, content: str, start: int, end: int, matched_text: str, rule: Optional[BrandRule] = None
+    ) -> bool:
+        """
+        Context-aware inspection to determine if a matched keyword is used in a compliant,
+        cautionary, or negated disclaimer context (e.g. 'We do not guarantee financial returns').
+        """
+        sentence, pre, post = cls.get_sentence_context(content, start, end)
+        m_low = matched_text.lower()
+
+        # 1. Imperative invitation trap: "Do not miss our guaranteed returns!"
+        if re.search(r"\b(do\s+not|don't)\s+(?:miss|hesitate|forget|pass\s+up|delay|wait)\b", pre, re.IGNORECASE):
+            return False
+
+        # 1b. Correlative/additive emphasis trap: "not only guaranteed returns", "not merely guaranteed profits", "not just 100% risk-free"
+        if re.search(r"\bnot\s+(?:only|merely|just|simply)\b(?:\s+\w+){0,2}\s*$", pre.strip(), re.IGNORECASE):
+            return False
+
+        # 2. Risk claim vs. Negation:
+        # If the matched text itself asserts "without any risk", "zero risk", "risk-free",
+        # it is claiming no risk exists. That is only cautionary if explicitly disclaimed:
+        # e.g., "is not risk-free", "not without risk", "no investment is risk-free".
+        is_risk_elimination_phrase = any(
+            rk in m_low for rk in ("without risk", "without any risk", "with no risk", "zero risk", "risk-free", "risk free")
+        )
+        if is_risk_elimination_phrase:
+            if re.search(
+                r"\b(?:is\s+not|are\s+not|was\s+not|were\s+not|not|never)\s+(?:completely\s+)?risk-?free\b",
+                sentence,
+                re.IGNORECASE,
+            ):
+                return True
+            if re.search(r"\b(?:not|never)\s+without\s+risk\b", sentence, re.IGNORECASE):
+                return True
+            if re.search(
+                r"\b(?:no|neither)\s+(?:investment|product|service)\s+is\s+(?:completely\s+)?risk-?free\b",
+                sentence,
+                re.IGNORECASE,
+            ):
+                return True
+            # Otherwise, asserting zero risk is a genuine violation of risk-free guidelines
+            return False
+
+        # 3. Direct verbal negation preceding the match:
+        # e.g. "We do not guarantee", "Company does not offer guaranteed", "We cannot guarantee", "never guarantee"
+        if re.search(
+            r"\b(do\s+not|does\s+not|did\s+not|don't|doesn't|cannot|can't|never|will\s+not|won't|shall\s+not|refuse\s+to|fail\s+to)\s+(?:\w+\s+){0,3}$",
+            pre,
+            re.IGNORECASE,
+        ):
+            return True
+
+        # 4. Passive negation preceding the match:
+        # e.g. "Returns are not guaranteed", "Profits are never guaranteed"
+        if re.search(
+            r"\b(is\s+not|are\s+not|was\s+not|were\s+not|not|never)\s+(?:\w+\s+){0,2}$",
+            pre,
+            re.IGNORECASE,
+        ):
+            return True
+
+        # 5. Direct noun/clause negation:
+        # e.g. "is no guarantee of", "makes no guarantee", "offers no guarantee", "without any guarantee"
+        if re.search(
+            r"\b(?:is\s+no|are\s+no|offers?\s+no|makes?\s+no|provides?\s+no|gives?\s+no|with\s+no|without\s+(?:any\s+)?)\s+(?:\w+\s+){0,2}$",
+            pre,
+            re.IGNORECASE,
+        ):
+            return True
+
+        # 6. Disclaimers and regulatory caution:
+        if re.search(r"\b(disclaim|disclaims|disclaimed|disclaiming)\s+(?:\w+\s+){0,3}$", pre, re.IGNORECASE):
+            return True
+
+        if re.search(
+            r"\b(?:past performance (?:is|offers?|provides?) (?:not|no)|not a guarantee of future|subject to market risks? and (?:are|is) not guaranteed|investments? (?:are|is) subject to market risks?)\b",
+            sentence,
+            re.IGNORECASE,
+        ):
+            return True
+
+        return False
+
+    @classmethod
+    def is_competitor_claim(cls, content: str, start: int, end: int, matched_text: str) -> bool:
+        """
+        Distinguish competitor claims from claims made by our own brand.
+        e.g. 'Our competitors guarantee returns, but we don't.'
+        """
+        sentence, pre, post = cls.get_sentence_context(content, start, end)
+
+        competitor_pattern = (
+            r"\b(?:our\s+|the\s+)?(?:competitors?|rivals?|"
+            r"other\s+(?:companies|platforms?|providers?|services?|apps?|firms?)|"
+            r"legacy\s+(?:banks?|systems?|providers?)|"
+            r"traditional\s+banks?)\b"
+        )
+
+        if not re.search(competitor_pattern, sentence, re.IGNORECASE):
+            return False
+
+        # If the immediate subject right before the match is our brand ("we", "our platform", etc.):
+        # e.g. "... but we guarantee returns" or "Unlike competitors, we guarantee"
+        brand_subject_before_match = re.search(
+            r"\b(?:we|our\s+(?:platform|team|company|service|firm|app|system|brand|product)|us)\s+(?:also\s+)?(?:do\s+)?$",
+            pre.strip(),
+            re.IGNORECASE,
+        )
+        if brand_subject_before_match:
+            # This is our brand's claim, NOT a competitor claim!
+            return False
+
+        # Check if the competitor is the subject of the clause containing the match:
+        # e.g. "Our competitors guarantee returns, but we don't." or "but ApexWealth doesn't"
+        competitor_in_pre = re.search(competitor_pattern, pre, re.IGNORECASE)
+        contrast_disavowal_in_post = re.search(
+            r"\b(?:but\s+(?:we|our\s+\w+|\w+)\s+(?:do\s+not|don't|never|cannot|does\s+not|doesn't)|"
+            r"while\s+(?:we|our\s+\w+|\w+)\s+(?:do\s+not|don't|never|cannot|does\s+not|doesn't)|"
+            r"whereas\s+(?:we|our\s+\w+|\w+)\s+(?:do\s+not|don't|never|cannot|does\s+not|doesn't)|"
+            r"unlike\s+us|(?:we|our\s+\w+|\w+)\s+(?:do\s+not|don't|never|cannot|does\s+not|doesn't))\b",
+            post,
+            re.IGNORECASE,
+        )
+
+        if competitor_in_pre and contrast_disavowal_in_post:
+            return True
+
+        # Check "Unlike competitors who guarantee returns, [we / ApexWealth ...] ..."
+        if re.search(r"^\s*unlike\s+(?:our\s+|the\s+)?(?:competitors?|rivals?|other\b)", pre, re.IGNORECASE):
+            if re.search(r"\bwho\b", pre, re.IGNORECASE) and not re.search(r",", pre):
+                return True
+
+        return False
 
     @classmethod
     def extract_prohibited_terms_from_rule(cls, rule: BrandRule) -> List[str]:
@@ -58,6 +232,8 @@ class DeterministicChecker:
             or "restricted" in rule_title_l
             or "never use" in rule_desc_l
             or "do not use" in rule_desc_l
+            or "must not" in rule_desc_l
+            or "not allowed" in rule_desc_l
             or "np-comp" in rule_desc_l
         )
 
@@ -71,29 +247,47 @@ class DeterministicChecker:
                 start, end = match.span()
                 matched_excerpt = content[start:end]
 
+                # Context-aware inspection: skip if negated, cautionary, or competitor statement
+                if cls.is_negated_or_cautionary(content, start, end, matched_excerpt, rule):
+                    continue
+                if cls.is_competitor_claim(content, start, end, matched_excerpt):
+                    continue
+
                 t_low = term.lower()
-                rep = "approved terminology"
+                rep = "reliable alternative"
                 if "risk-free" in t_low or "risk free" in t_low:
                     rep = "secure, risk-managed"
                 elif "guarantee" in t_low:
-                    rep = "proven"
+                    rep = "target" if "return" in t_low else "proven"
                 elif "overnight" in t_low:
-                    rep = "sustainably"
+                    rep = "sustainably over time"
                 elif "rich" in t_low or "millionaire" in t_low:
                     rep = "sustainable business growth"
+                elif "crazy secret" in t_low:
+                    rep = "proven methodology"
+                elif "the single best" in t_low:
+                    rep = "a leading"
+                elif "double" in t_low:
+                    rep = "scale sustainably"
+                elif "wealth" in t_low:
+                    rep = "build wealth sustainably" if "build" in t_low else "sustainable wealth creation"
+                elif "effortless" in t_low:
+                    rep = "systematic"
+                else:
+                    rep = "responsible alternative"
 
-                findings.append(
-                    FindingCreate(
-                        severity="critical" if "critical" in rule_desc_l or "statutory" in rule_desc_l or "must never" in rule_desc_l else "major",
-                        category=rule.category,
-                        excerpt=matched_excerpt,
-                        explanation=f"Content contains prohibited terminology '{matched_excerpt}' flagged under rule '{rule.title}'.",
-                        guideline_reference=f"Rule #{rule.id}: {rule.title}",
-                        suggested_correction=rep,
-                        confidence=1.0,
-                        status="open",
-                    )
+                f_item = FindingCreate(
+                    severity=cls.extract_rule_severity(rule, default="major"),
+                    category=rule.category,
+                    excerpt=matched_excerpt,
+                    explanation=f"Content contains prohibited terminology '{matched_excerpt}' flagged under rule '{rule.title}'.",
+                    guideline_reference=f"Rule #{rule.id}: {rule.title}",
+                    suggested_correction=rep,
+                    confidence=1.0,
+                    status="open",
                 )
+                object.__setattr__(f_item, "_span", (start, end))
+                findings.append(f_item)
 
         return findings
 
@@ -111,129 +305,234 @@ class DeterministicChecker:
         canonical_ref = f"Rule #{rule.id}: {rule.title}"
         cat = rule.category
 
-        # Performance Guarantees (NP-COMP-001 / Guaranteed Financial Returns)
-        if "np-comp-001" in rule_desc_l or "guaranteed financial returns" in rule_title_l or "guarantee" in rule_title_l:
+        # Performance Guarantees (Guaranteed Financial Returns / Promised Outcomes)
+        is_guarantee_concept = (
+            "np-comp-001" in rule_desc_l
+            or "guaranteed financial returns" in rule_title_l
+            or "guarantee" in rule_title_l
+            or "guarantee" in rule_desc_l
+            or "promised return" in rule_desc_l
+            or "promised outcome" in rule_desc_l
+        )
+        if is_guarantee_concept:
             guarantee_patterns = [
                 (r"\bguaranteed to double\b", "designed to help scale", "Performance guarantees ('guaranteed to double') violate financial compliance standards."),
                 (r"\bguarantees?\s+instant\s+settlements?\b", "enables fast settlements", "Guarantees of financial outcomes and instant settlements are prohibited."),
                 (r"\bguaranteed success\b", "reliable support", "Guarantees of business or investment success are prohibited."),
+                (r"\bguarantees?\s+(?:\d+%\s+)?returns?\b", "target returns", "Guaranteed returns violate financial compliance rules."),
                 (r"\bguaranteed returns?\b", "target returns", "Guaranteed returns violate financial compliance rules."),
+                (r"\bguarantees?\s+(?:\d+%\s+)?profits?\b", "potential growth", "Guaranteed profits violate financial compliance rules."),
                 (r"\bguaranteed profits?\b", "potential growth", "Guaranteed profits violate financial compliance rules."),
                 (r"\b100%\s+guaranteed\b", "proven", "Absolute guarantees violate governance standards."),
+                # Implied guarantees
+                (r"\b(?:will|to)\s+double\s+(?:your\s+)?(?:investment|revenue|money|returns?|capital)\b", "aims to scale your business sustainably", "Implied performance guarantees violate financial compliance standards."),
+                (r"\b(?:investment|revenue|money|returns?|capital)\s+will\s+double\b", "investment is structured for growth", "Implied performance guarantees violate financial compliance standards."),
             ]
+            sev_guarantee = cls.extract_rule_severity(rule, default="critical")
             for pat, repl, expl in guarantee_patterns:
                 for m in re.finditer(pat, content, re.IGNORECASE):
-                    findings.append(
-                        FindingCreate(
-                            severity="critical",
-                            category=cat,
-                            excerpt=content[m.start() : m.end()],
-                            explanation=expl,
-                            guideline_reference=canonical_ref,
-                            suggested_correction=repl,
-                            confidence=1.0,
-                            status="open",
-                        )
+                    start, end = m.span()
+                    matched_excerpt = content[start:end]
+                    if cls.is_negated_or_cautionary(content, start, end, matched_excerpt, rule):
+                        continue
+                    if cls.is_competitor_claim(content, start, end, matched_excerpt):
+                        continue
+                    f_item = FindingCreate(
+                        severity=sev_guarantee,
+                        category=cat,
+                        excerpt=matched_excerpt,
+                        explanation=expl,
+                        guideline_reference=canonical_ref,
+                        suggested_correction=repl,
+                        confidence=1.0,
+                        status="open",
                     )
+                    object.__setattr__(f_item, "_span", (start, end))
+                    findings.append(f_item)
 
-        # Risk-Free Claims (NP-COMP-002 / Risk-Free Claims)
-        if "np-comp-002" in rule_desc_l or "risk-free claims" in rule_title_l or "risk-free" in rule_title_l:
+        # Risk-Free Claims / Absolute Safety / Market Immunity
+        is_risk_concept = (
+            "np-comp-002" in rule_desc_l
+            or "risk-free claims" in rule_title_l
+            or "risk-free" in rule_title_l
+            or "risk-free" in rule_desc_l
+            or "risk" in rule_title_l
+            or "market uncertainty" in rule_desc_l
+            or "market conditions" in rule_desc_l
+            or "zero risk" in rule_desc_l
+        )
+        if is_risk_concept:
             risk_patterns = [
                 (r"\b100%\s*risk-free\b", "secure, risk-managed", "Financial products must never be described as 100% risk-free."),
                 (r"\bzero investment risk\b", "managed risk", "Zero risk claims are non-compliant with financial regulations."),
                 (r"\bno chance of losing money\b", "risk-mitigated strategies", "Guarantees against capital loss are prohibited."),
                 (r"\bcompletely safe investment\b", "regulated financial service", "Absolute safety claims are prohibited."),
+                # Contextual implied risk elimination & market immunity
+                (r"\bwithout (?:any )?risk\b", "with managed risk", "Claims that eliminate financial risk violate compliance regulations."),
+                (r"\bwith zero risk\b", "with risk mitigation", "Claims of zero investment risk violate financial regulations."),
+                (r"\bwith no risk\b", "with managed risk", "Absolute risk elimination claims violate financial regulations."),
+                (r"\bregardless\s+of\s+market\s+conditions\b", "aligned with your risk tolerance", "Claims implying immunity to market conditions violate financial risk disclosure standards."),
+                (r"\bwithout\s+worrying\s+about\s+market\s+(?:uncertainty|volatility|conditions|risks?)\b", "with strategies designed to navigate market volatility", "Claims implying complete insulation from market uncertainty mislead investors regarding market risk."),
+                (r"\bimmune\s+to\s+market\s+(?:volatility|conditions|dips?|crashes?)\b", "diversified against market volatility", "Claims of immunity to market volatility violate financial regulations."),
+                (r"\bmarket-?proof\b", "risk-mitigated", "Claims that an investment or product is market-proof violate regulatory standards."),
             ]
+            sev_risk = cls.extract_rule_severity(rule, default="critical")
             for pat, repl, expl in risk_patterns:
                 for m in re.finditer(pat, content, re.IGNORECASE):
-                    findings.append(
-                        FindingCreate(
-                            severity="critical",
-                            category=cat,
-                            excerpt=content[m.start() : m.end()],
-                            explanation=expl,
-                            guideline_reference=canonical_ref,
-                            suggested_correction=repl,
-                            confidence=1.0,
-                            status="open",
-                        )
+                    start, end = m.span()
+                    matched_excerpt = content[start:end]
+                    if cls.is_negated_or_cautionary(content, start, end, matched_excerpt, rule):
+                        continue
+                    if cls.is_competitor_claim(content, start, end, matched_excerpt):
+                        continue
+                    f_item = FindingCreate(
+                        severity=sev_risk,
+                        category=cat,
+                        excerpt=matched_excerpt,
+                        explanation=expl,
+                        guideline_reference=canonical_ref,
+                        suggested_correction=repl,
+                        confidence=1.0,
+                        status="open",
                     )
+                    object.__setattr__(f_item, "_span", (start, end))
+                    findings.append(f_item)
 
-        # Unrealistic Wealth / Riches Promises (NP-COMP-003 / Unrealistic Wealth Promises)
-        if "np-comp-003" in rule_desc_l or "unrealistic wealth" in rule_title_l or "wealth promises" in rule_title_l:
+        # Unrealistic Wealth / Effortless Growth / Passive Income
+        is_wealth_concept = (
+            "np-comp-003" in rule_desc_l
+            or "unrealistic wealth" in rule_title_l
+            or "wealth promises" in rule_title_l
+            or "wealth" in rule_title_l
+            or "wealth" in rule_desc_l
+            or "passive income" in rule_desc_l
+            or "effortless" in rule_desc_l
+            or "get-rich" in rule_desc_l
+        )
+        if is_wealth_concept:
             wealth_patterns = [
+                (r"\b(?:build|create|make|accumulate|generate)\s+wealth\s+effortlessly\b", "build wealth sustainably", "Promises of effortless wealth creation violate responsible brand guidelines."),
+                (r"\bwealth\s+creation\s+(?:is\s+)?effortless\b", "wealth creation requires discipline", "Claims that wealth creation is effortless are misleading and non-compliant."),
+                (r"\bmoney\s+works?\s+(?:tirelessly\s+)?while\s+you\s+sleep\b", "portfolio is managed continuously", "Implied passive wealth promises ('money works while you sleep') violate responsible promotion standards."),
+                (r"\bwatch\s+your\s+(?:money|funds?|wealth|financial\s+future)\s+grow\s+(?:effortlessly|on\s+autopilot|while\s+you\s+sleep)\b", "plan your financial future with expert guidance", "Unrealistic claims of automated financial growth violate compliance rules."),
+                (r"\bwithout\s+needing\s+to\s+understand\s+the\s+markets?\b", "with professional market insights", "Claims implying financial success without market awareness or understanding are misleading."),
                 (r"\brevenue overnight\b", "revenue sustainably over time", "Unrealistic rapid wealth and overnight revenue promises are prohibited."),
                 (r"\bunlimited\s+(?:revenue\s+)?growth\b", "sustainable revenue growth", "Exaggerated promises of unlimited revenue growth violate responsible brand governance."),
                 (r"\bmake you rich overnight\b", "help build long-term business value", "Get-rich-quick claims are prohibited."),
                 (r"\bbecome a millionaire instantly\b", "achieve sustained financial growth", "Instant wealth promises violate compliance."),
                 (r"\beffortless growth\b", "sustainable growth", "Claims of effortless growth violate responsible brand governance."),
+                (r"\bpassive\s+income\s+(?:on\s+autopilot|without\s+effort)\b", "managed investment income", "Promises of effortless passive income violate financial compliance regulations."),
             ]
+            sev_wealth = cls.extract_rule_severity(rule, default="major")
             for pat, repl, expl in wealth_patterns:
                 for m in re.finditer(pat, content, re.IGNORECASE):
-                    findings.append(
-                        FindingCreate(
-                            severity="major",
-                            category=cat,
-                            excerpt=content[m.start() : m.end()],
-                            explanation=expl,
-                            guideline_reference=canonical_ref,
-                            suggested_correction=repl,
-                            confidence=1.0,
-                            status="open",
-                        )
+                    start, end = m.span()
+                    matched_excerpt = content[start:end]
+                    if cls.is_negated_or_cautionary(content, start, end, matched_excerpt, rule):
+                        continue
+                    if cls.is_competitor_claim(content, start, end, matched_excerpt):
+                        continue
+                    f_item = FindingCreate(
+                        severity=sev_wealth,
+                        category=cat,
+                        excerpt=matched_excerpt,
+                        explanation=expl,
+                        guideline_reference=canonical_ref,
+                        suggested_correction=repl,
+                        confidence=1.0,
+                        status="open",
                     )
+                    object.__setattr__(f_item, "_span", (start, end))
+                    findings.append(f_item)
 
         # Misleading Performance Claims / Superlatives / Absolutes (NP-COMP-004)
-        if "np-comp-004" in rule_desc_l or "misleading performance" in rule_title_l or "performance claims" in rule_title_l:
+        is_perf_concept = (
+            "np-comp-004" in rule_desc_l
+            or "misleading performance" in rule_title_l
+            or "performance claims" in rule_title_l
+            or "performance" in rule_title_l
+            or "superlative" in rule_desc_l
+            or "fastest" in rule_desc_l
+            or "throughput" in rule_desc_l
+        )
+        if is_perf_concept:
             perf_patterns = [
                 (r"\bthe world's fastest\b", "a high-performance", "Unsubstantiated superlative claims ('the world's fastest') are prohibited."),
                 (r"(?<!the )\bworld's fastest\b", "high-performance", "Superlative claims require verified third-party empirical evidence."),
+                (r"\bgrow\s+faster\s+than\s+ever\b", "grow steadily", "Unsubstantiated accelerated growth claims violate performance communication standards."),
                 (r"\b\d+[\s\w]*(?:million|billion|k)?\s*transactions\s+per\s+second\b", "high-throughput transaction processing", "Unverified numerical performance claims require verifiable empirical evidence."),
                 (r"\b(?:absolutely\s+)?zero\s+downtime\b", "industry-leading uptime", "Absolute zero downtime claims are unverifiable and violate governance rules."),
-                (r"\b(?:the\s+)?number\s+(?:one|1)\s+payment\s+provider(?:\s+in\s+[a-zA-Z]+)?\b", "a leading payment provider in India", "Comparative superlative claims require third-party independent verification."),
+                (r"\b(?:the\s+)?number\s+(?:one|1)\s+payment\s+provider(?:\s+in\s+[a-zA-Z]+)?\b", "a leading payment provider", "Comparative superlative claims require third-party independent verification."),
                 (r"\btrusted\s+by\s+100%\s+of\s+businesses\b", "Trusted by businesses nationwide", "Fabricated or absolute user adoption statistics are prohibited."),
                 (r"\beliminates?\s+(?:every|all)\s+security\s+threats?\b", "delivers advanced multi-layer security protection", "Absolute claims of eliminating all security threats are unverifiable and prohibited."),
                 (r"\beliminates all fraud\b", "delivers advanced fraud prevention", "Absolute claims of eliminating 100% of fraud are unverifiable and prohibited."),
                 (r"\bzero transaction failures\b", "industry-leading transaction reliability", "Absolute zero failure claims are unverifiable and prohibited."),
             ]
+            sev_perf = cls.extract_rule_severity(rule, default="major")
             for pat, repl, expl in perf_patterns:
                 for m in re.finditer(pat, content, re.IGNORECASE):
-                    findings.append(
-                        FindingCreate(
-                            severity="major",
-                            category=cat,
-                            excerpt=content[m.start() : m.end()],
-                            explanation=expl,
-                            guideline_reference=canonical_ref,
-                            suggested_correction=repl,
-                            confidence=1.0,
-                            status="open",
-                        )
+                    start, end = m.span()
+                    matched_excerpt = content[start:end]
+                    if cls.is_negated_or_cautionary(content, start, end, matched_excerpt, rule):
+                        continue
+                    if cls.is_competitor_claim(content, start, end, matched_excerpt):
+                        continue
+                    f_item = FindingCreate(
+                        severity=sev_perf,
+                        category=cat,
+                        excerpt=matched_excerpt,
+                        explanation=expl,
+                        guideline_reference=canonical_ref,
+                        suggested_correction=repl,
+                        confidence=1.0,
+                        status="open",
                     )
+                    object.__setattr__(f_item, "_span", (start, end))
+                    findings.append(f_item)
 
         # Prohibited Sales Messaging and Slang (Rule #11 / Aggressive Language)
-        if "prohibited sales messaging" in rule_title_l or "aggressive sales language" in rule_desc_l:
+        is_sales_concept = (
+            "prohibited sales messaging" in rule_title_l
+            or "aggressive sales language" in rule_desc_l
+            or "aggressive" in rule_title_l
+            or "aggressive" in rule_desc_l
+            or "slang" in rule_title_l
+        )
+        if is_sales_concept:
             sales_patterns = [
                 (r"\bdestroys? (?:every |all |the )?competitors?(?: in the market)?\b", "Leads the market with reliable solutions", "Excessively aggressive sales language violates brand voice standards."),
                 (r"\bcrush(?:es)? the competition\b", "competes effectively", "Aggressive competitive language violates brand tone requirements."),
             ]
+            sev_sales = cls.extract_rule_severity(rule, default="major")
             for pat, repl, expl in sales_patterns:
                 for m in re.finditer(pat, content, re.IGNORECASE):
-                    findings.append(
-                        FindingCreate(
-                            severity="major",
-                            category=cat,
-                            excerpt=content[m.start() : m.end()],
-                            explanation=expl,
-                            guideline_reference=canonical_ref,
-                            suggested_correction=repl,
-                            confidence=1.0,
-                            status="open",
-                        )
+                    start, end = m.span()
+                    matched_excerpt = content[start:end]
+                    if cls.is_negated_or_cautionary(content, start, end, matched_excerpt, rule):
+                        continue
+                    if cls.is_competitor_claim(content, start, end, matched_excerpt):
+                        continue
+                    f_item = FindingCreate(
+                        severity=sev_sales,
+                        category=cat,
+                        excerpt=matched_excerpt,
+                        explanation=expl,
+                        guideline_reference=canonical_ref,
+                        suggested_correction=repl,
+                        confidence=1.0,
+                        status="open",
                     )
+                    object.__setattr__(f_item, "_span", (start, end))
+                    findings.append(f_item)
 
-        # Financial Risk Disclaimer (NP-DISC-001)
-        if "np-disc" in rule_desc_l or "financial risk disclaimer" in rule_title_l:
+        # Financial / Regulatory Risk Disclaimer
+        is_disc_concept = (
+            "np-disc" in rule_desc_l
+            or "disclaimer" in rule_title_l
+            or "mandatory disclosure" in rule_desc_l
+            or "disclosure" in rule_title_l
+        )
+        if is_disc_concept:
             disclaimer_quotes = cls.extract_quoted_terms(rule.description)
             approved_disc = None
             for q in disclaimer_quotes:
@@ -244,12 +543,12 @@ class DeterministicChecker:
             if approved_disc:
                 clean_content = " ".join(content.split()).lower()
                 clean_disc = " ".join(approved_disc.split()).lower()
-                financial_keywords = ["payment", "revenue", "investment", "financial", "profits", "earnings", "returns", "money", "transaction", "settlement"]
+                financial_keywords = ["payment", "revenue", "investment", "financial", "profits", "earnings", "returns", "money", "transaction", "settlement", "wealth", "portfolio", "capital"]
                 touches_finance = any(k in clean_content for k in financial_keywords)
                 if touches_finance and clean_disc not in clean_content:
                     findings.append(
                         FindingCreate(
-                            severity="critical",
+                            severity=cls.extract_rule_severity(rule, default="critical"),
                             category=cat,
                             excerpt="[Missing Regulatory Disclaimer]",
                             explanation=f"Missing mandatory regulatory disclaimer required by rule '{rule.title}'.",
@@ -281,18 +580,22 @@ class DeterministicChecker:
             for match in regex.finditer(content):
                 start, end = match.span()
                 matched_excerpt = content[start:end]
-                findings.append(
-                    FindingCreate(
-                        severity="major",
-                        category=rule.category,
-                        excerpt=matched_excerpt,
-                        explanation=f"Found unapproved phrase '{matched_excerpt}'. Rule '{rule.title}' specifies using '{preferred}' instead.",
-                        guideline_reference=f"Rule #{rule.id}: {rule.title}",
-                        suggested_correction=preferred,
-                        confidence=1.0,
-                        status="open",
-                    )
+                if cls.is_negated_or_cautionary(content, start, end, matched_excerpt, rule):
+                    continue
+                if cls.is_competitor_claim(content, start, end, matched_excerpt):
+                    continue
+                f_item = FindingCreate(
+                    severity=cls.extract_rule_severity(rule, default="major"),
+                    category=rule.category,
+                    excerpt=matched_excerpt,
+                    explanation=f"Found unapproved phrase '{matched_excerpt}'. Rule '{rule.title}' specifies using '{preferred}' instead.",
+                    guideline_reference=f"Rule #{rule.id}: {rule.title}",
+                    suggested_correction=preferred,
+                    confidence=1.0,
+                    status="open",
                 )
+                object.__setattr__(f_item, "_span", (start, end))
+                findings.append(f_item)
         return findings
 
     @classmethod
@@ -326,7 +629,7 @@ class DeterministicChecker:
             if clean_disclaimer not in clean_content:
                 findings.append(
                     FindingCreate(
-                        severity="critical",
+                        severity=cls.extract_rule_severity(rule, default="critical"),
                         category=rule.category,
                         excerpt="[Missing Regulatory Disclaimer]",
                         explanation=f"Missing mandatory regulatory disclaimer required by rule '{rule.title}'.",
@@ -353,7 +656,7 @@ class DeterministicChecker:
             if len(content) > limit:
                 findings.append(
                     FindingCreate(
-                        severity="major",
+                        severity=cls.extract_rule_severity(rule, default="major"),
                         category=rule.category,
                         excerpt=content[:80] + "...",
                         explanation=f"Content length ({len(content)} characters) exceeds the maximum limit of {limit} characters defined in rule '{rule.title}'.",
@@ -389,24 +692,36 @@ class DeterministicChecker:
             if f.excerpt == "[Missing Regulatory Disclaimer]":
                 # Only include one missing disclaimer finding
                 if not any(d.excerpt == "[Missing Regulatory Disclaimer]" for d in deduped):
+                    object.__setattr__(f, "_span", (len(content), len(content)))
                     deduped.append(f)
                 continue
 
-            pat = re.compile(rf"\b{re.escape(f.excerpt)}\b", re.IGNORECASE)
-            matched_spans = [m.span() for m in pat.finditer(content)]
-            if not matched_spans:
-                continue
+            span = getattr(f, "_span", None)
+            spans_to_check = [span] if span and isinstance(span, tuple) else []
+            if not spans_to_check:
+                pat = re.compile(rf"\b{re.escape(f.excerpt)}\b", re.IGNORECASE)
+                spans_to_check = [m.span() for m in pat.finditer(content)]
 
-            for start, end in matched_spans:
+            for start, end in spans_to_check:
+                matched_slice = content[start:end]
+                if cls.is_negated_or_cautionary(content, start, end, matched_slice):
+                    continue
+                if cls.is_competitor_claim(content, start, end, matched_slice):
+                    continue
+
                 # Suppress if fully enclosed by a longer matched finding
                 is_subspan = any(s <= start and end <= e for (s, e) in seen_spans)
                 if not is_subspan:
                     seen_spans.append((start, end))
-                    f_copy = f.model_copy(update={"excerpt": content[start:end]})
+                    f_copy = f.model_copy(update={"excerpt": matched_slice})
+                    object.__setattr__(f_copy, "_span", (start, end))
                     deduped.append(f_copy)
 
         # Sort findings by order of appearance in content (disclaimer placed at end)
         def sort_key(f: FindingCreate):
+            span = getattr(f, "_span", None)
+            if span and isinstance(span, tuple):
+                return span[0]
             if f.excerpt == "[Missing Regulatory Disclaimer]":
                 return 999999
             pos = content.find(f.excerpt)

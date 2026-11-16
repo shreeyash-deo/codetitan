@@ -258,7 +258,7 @@ export const WorkspaceSelectorView: React.FC = () => {
                       className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs text-white shrink-0"
                       style={{ backgroundColor: ws.color }}
                     >
-                      {ws.name.substring(0, 2).toUpperCase()}
+                      {(ws.name || 'WS').slice(0, 2).toUpperCase()}
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">

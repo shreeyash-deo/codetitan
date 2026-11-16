@@ -360,23 +360,25 @@ def test_scenario_12_accepted_corrections_and_reviewer_decisions_consistent(db, 
     db.commit()
 
     sub = ContentReviewSubmission(title="Sign-off Test", content=SAMPLE_NON_COMPLIANT_CONTENT, content_type="social_media")
-    review = review_service.submit_and_audit(db, ws.id, user.id, sub)
+    mock_payload = json.dumps({"summary": "Semantic audit completed successfully.", "findings": []})
+    with patch("app.services.compliance.ai_checker.AIChecker.call_gemini", return_value=mock_payload):
+        review = review_service.submit_and_audit(db, ws.id, user.id, sub)
 
-    # Employee applies all corrections
-    for f in list(review.findings):
-        if f.suggested_correction:
-            review_service.apply_correction(db, review.id, f.id, user.id)
+        # Employee applies all corrections
+        for f in list(review.findings):
+            if f.suggested_correction:
+                review_service.apply_correction(db, review.id, f.id, user.id)
 
-    db.refresh(review)
-    # Employee requests reviewer approval
-    appr_req = approval_service.request_review_approval(db, review_id=review.id, user=user)
-    # Reviewer approves
-    approved_appr = approval_service.approve(db, approval=appr_req, reviewer=reviewer)
+        db.refresh(review)
+        # Employee requests reviewer approval
+        appr_req = approval_service.request_review_approval(db, review_id=review.id, user=user)
+        # Reviewer approves
+        approved_appr = approval_service.approve(db, approval=appr_req, reviewer=reviewer)
 
-    db.refresh(review)
-    assert approved_appr.status == "approved"
-    assert review.status == "approved"
-    assert review.compliance_score == 100
+        db.refresh(review)
+        assert approved_appr.status == "approved"
+        assert review.status == "approved"
+        assert review.compliance_score == 100
 
 
 # ---------------------------------------------------------------------------

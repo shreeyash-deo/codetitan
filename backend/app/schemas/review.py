@@ -5,6 +5,7 @@ from app.schemas.user import UserOut
 from app.schemas.finding import FindingOut, FindingCreate
 from app.schemas.activity import ReviewActivityOut
 from app.schemas.approval import ApprovalOut
+from app.schemas.version import ContentVersionSummaryOut
 
 ContentType = Literal[
     "social_media",
@@ -52,6 +53,7 @@ class ContentReviewOut(ContentReviewBase):
     audit_status: str = "verified"
     audited_content_hash: Optional[str] = None
     audited_at: Optional[datetime] = None
+    current_version_number: int = 1
     findings_count: int = 0
     rule_set_version: Optional[str] = None
     summary: Optional[str] = None
@@ -62,6 +64,7 @@ class ContentReviewOut(ContentReviewBase):
     findings: Optional[List[FindingOut]] = None
     approvals: Optional[List[ApprovalOut]] = None
     activities: Optional[List[ReviewActivityOut]] = None
+    versions: Optional[List[ContentVersionSummaryOut]] = None
     updated_content: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -87,4 +90,6 @@ class ApplyCorrectionResponse(BaseModel):
     audit_status: str = "verified"
     audited_content_hash: Optional[str] = None
     audited_at: Optional[datetime] = None
+    version_number: Optional[int] = None
+    current_version_number: Optional[int] = None
     findings: Optional[List[FindingOut]] = None

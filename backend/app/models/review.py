@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from app.models.finding import Finding
     from app.models.approval import Approval
     from app.models.activity import ReviewActivity
+    from app.models.version import ContentVersion
 
 
 class ContentReview(Base):
@@ -26,6 +27,7 @@ class ContentReview(Base):
     status: Mapped[str] = mapped_column(String(50), default="in_review", nullable=False, index=True)
     compliance_score: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
     audit_status: Mapped[str] = mapped_column(String(50), default="unverified", nullable=False)
+    current_version_number: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -52,9 +54,26 @@ class ContentReview(Base):
     # Relationships
     workspace: Mapped["Workspace"] = relationship("Workspace", back_populates="reviews")
     submitter: Mapped[Optional["User"]] = relationship("User", back_populates="submitted_reviews")
-    findings: Mapped[List["Finding"]] = relationship(
+    _all_findings: Mapped[List["Finding"]] = relationship(
         "Finding", back_populates="review", cascade="all, delete-orphan"
     )
+    versions: Mapped[List["ContentVersion"]] = relationship(
+        "ContentVersion", back_populates="review", cascade="all, delete-orphan", order_by="ContentVersion.version_number"
+    )
+
+    @property
+    def findings(self) -> List["Finding"]:
+        if hasattr(self, "_active_findings") and self._active_findings is not None:
+            return self._active_findings
+        if self.versions:
+            cur_v = next((v for v in self.versions if v.version_number == self.current_version_number), None)
+            if cur_v and cur_v.findings is not None:
+                return cur_v.findings
+        return self._all_findings
+
+    @findings.setter
+    def findings(self, value: List["Finding"]):
+        self._active_findings = value
     approvals: Mapped[List["Approval"]] = relationship(
         "Approval", back_populates="review", cascade="all, delete-orphan"
     )

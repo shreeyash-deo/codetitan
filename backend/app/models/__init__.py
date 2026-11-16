@@ -5,6 +5,7 @@ from app.models.workspace_member import WorkspaceMember
 from app.models.guideline import GuidelineDocument
 from app.models.rule import BrandRule
 from app.models.review import ContentReview
+from app.models.version import ContentVersion
 from app.models.finding import Finding
 from app.models.approval import Approval
 from app.models.activity import ReviewActivity
@@ -17,6 +18,7 @@ __all__ = [
     "GuidelineDocument",
     "BrandRule",
     "ContentReview",
+    "ContentVersion",
     "Finding",
     "Approval",
     "ReviewActivity",

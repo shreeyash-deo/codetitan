@@ -23,6 +23,12 @@ from app.services.review_service import review_service
 from app.services.approval_service import approval_service
 from app.services.workspace_service import workspace_service
 from app.services.compliance.compliance_engine import NoApprovedRulesError
+from app.schemas.version import (
+    ContentVersionSummaryOut,
+    ContentVersionDetailOut,
+    VersionComparisonOut,
+)
+from app.services.version_comparison_service import VersionComparisonService
 
 router = APIRouter(tags=["Content Reviews & Compliance"])
 
@@ -209,6 +215,8 @@ def update_review(
             review_id=review.id,
             new_content=new_content,
             user_id=current_user.id,
+            change_description="Content updated",
+            force_new_version=False,
         )
     else:
         db.commit()
@@ -246,7 +254,13 @@ def recheck_review(
 ):
     get_review_with_access(review_id, db, current_user)
     try:
-        return review_service.recheck_and_audit(db, review_id, user_id=current_user.id)
+        return review_service.recheck_and_audit(
+            db=db,
+            review_id=review_id,
+            user_id=current_user.id,
+            change_description="Re-audit request",
+            force_new_version=True,
+        )
     except ValueError as val_err:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err))
 
@@ -353,3 +367,73 @@ def apply_correction(
         return review_service.apply_correction(db, review_id, finding_id, current_user.id)
     except ValueError as val_err:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_err))
+
+
+# ============================================================================
+# CONTENT REVISION & VERSION HISTORY ENDPOINTS
+# ============================================================================
+
+@router.get(
+    "/reviews/{review_id}/versions",
+    response_model=List[ContentVersionSummaryOut],
+    summary="List all content versions for a review",
+)
+def get_review_versions(
+    review_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Retrieve immutable chronological version history for this review."""
+    get_review_with_access(review_id, db, current_user)
+    return review_service.get_versions(db, review_id)
+
+
+@router.get(
+    "/reviews/{review_id}/versions/{version_number}",
+    response_model=ContentVersionDetailOut,
+    summary="Get specific content version with its immutable findings",
+)
+def get_review_version(
+    review_id: int,
+    version_number: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Retrieve content snapshot, metadata, score, and immutable findings for a specific version."""
+    get_review_with_access(review_id, db, current_user)
+    version = review_service.get_version(db, review_id, version_number)
+    if not version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Version {version_number} not found for review {review_id}.",
+        )
+    return version
+
+
+@router.get(
+    "/reviews/{review_id}/compare",
+    response_model=VersionComparisonOut,
+    summary="Compare any two versions of a review",
+)
+def compare_review_versions(
+    review_id: int,
+    source_version: int = Query(..., ge=1, description="Source version number"),
+    target_version: int = Query(..., ge=1, description="Target version number"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Compare content text additions/deletions, score delta, audit statuses, and finding deltas between versions."""
+    get_review_with_access(review_id, db, current_user)
+    src = review_service.get_version(db, review_id, source_version)
+    if not src:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Source version {source_version} not found for review {review_id}.",
+        )
+    tgt = review_service.get_version(db, review_id, target_version)
+    if not tgt:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Target version {target_version} not found for review {review_id}.",
+        )
+    return VersionComparisonService.compare_versions(src, tgt)

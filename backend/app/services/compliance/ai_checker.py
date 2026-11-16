@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.models.rule import BrandRule
 from app.schemas.finding import FindingCreate
 from app.services.ai.gemini_client import gemini_client, redact_sensitive
+from app.services.compliance.deterministic_checker import deterministic_checker
 
 logger = logging.getLogger("brandshield.compliance.ai")
 
@@ -36,13 +37,22 @@ Inspect for:
 2. Messaging Consistency (contradicting brand pillars, mission, or target audience alignment)
 3. Contextual Terminology Usage (improper phrasing, slang, unapproved variants)
 4. Unsupported Claims (unverified claims, superlative claims like 'the fastest' or 'the best' without proof)
-5. Misleading Statements (deceptive conditions, hidden caveats, exaggerated promises)
-6. Contextual Brand Restrictions (statutory or regulatory violations)
+5. Misleading Statements (deceptive conditions, hidden caveats, exaggerated promises, implied guarantees)
+6. Contextual Brand Restrictions (statutory or regulatory violations, absolute safety or return promises)
+
+CRITICAL EVALUATION GUIDELINES:
+1. SEMANTIC INTENT & CONTEXT: Evaluate the full sentence and grammatical context, not isolated keywords.
+2. NEGATION & CAUTIONARY STATEMENTS: Do NOT flag statements where prohibited outcomes or guarantees are explicitly negated, disclaimed, or cautioned against (e.g. "We do not guarantee financial returns", "Past performance is no guarantee of future results", "Investing carries risk of capital loss"). These are compliant risk disclosures, NOT violations.
+3. BRAND VS. COMPETITOR CLAIMS: Distinguish between claims made by our brand and descriptive statements about competitors or industry practices (e.g., "Our competitors guarantee returns, but we don't" - the competitor guarantees, our brand does not; this is compliant). However, if the text claims our brand matches or exceeds prohibited competitor practices, flag our brand's claim.
+4. DIRECT & IMPLIED CLAIMS: Detect implied promises, subtle guarantees, and evasive risk claims (e.g. "Your investment will double without any risk", "Watch your money multiply safely", "A foolproof path to riches", "build wealth effortlessly", "money works while you sleep", "watch your financial future grow faster than ever", "without worrying about market uncertainty", "regardless of market conditions", "without needing to understand the markets") even if literal words like "guarantee" are omitted.
+5. NATURAL CORRECTION SUGGESTIONS: 'suggested_correction' MUST provide a natural, grammatically correct drop-in replacement tailored to fit seamlessly into the author's original sentence while removing the non-compliant claim. Never introduce new unverified claims.
+6. STANDARD MARKETING SOCIAL PROOF: Do NOT flag conventional marketing phrases (e.g. 'thousands of businesses', 'trusted partners', 'reliable support') as unverified performance statistics unless the copy asserts specific empirical throughput numbers (e.g. '10 million TPS') or fabricated absolute claims ('trusted by 100% of businesses').
+7. DISCLAIMER INDEPENDENCE (Section 5.3): Disclaimers do NOT neutralize, justify, or excuse prohibited promotional claims in the main text. If promotional body copy promises effortless wealth, market immunity, or guaranteed outcomes, it MUST be flagged even if a standard regulatory disclaimer is appended.
 
 CRITICAL GROUNDING RULES:
 1. 'excerpt' MUST be an EXACT, verbatim substring directly from the submitted content. Do not paraphrase.
 2. 'guideline_reference' MUST cite a REAL approved rule from the provided list, formatted as "Rule #{id}: {title}". NEVER invent rules or references.
-3. If content adheres completely to the rules, return an empty array for "findings".
+3. If content adheres completely to the rules (or is solely a compliant risk disclosure), return an empty array for "findings". Never dismiss prohibited claims in the body text because a disclaimer was added.
 4. 'severity' MUST be one of: "critical", "major", "minor", "suggestion".
 5. Provide a concise executive 'summary' assessing overall brand alignment.
 
@@ -53,11 +63,11 @@ Respond strictly with valid JSON:
   "findings": [
     {
       "severity": "critical",
-      "category": "Brand voice and tone",
+      "category": "Content restrictions",
       "excerpt": "exact phrase from text",
-      "explanation": "Why this violates the guideline",
+      "explanation": "Why this specific context violates the guideline",
       "guideline_reference": "Rule #12: Confident Voice",
-      "suggested_correction": "Revised phrasing",
+      "suggested_correction": "Natural in-context replacement phrasing",
       "confidence": 0.95
     }
   ]
@@ -126,7 +136,15 @@ class AIChecker:
             f"CONTENT TYPE: {content_type}\n\n"
             f"SUBMITTED CONTENT FOR AUDIT:\n\"\"\"\n{content}\n\"\"\"\n\n"
             f"APPROVED BRAND RULES TO ENFORCE:\n{rules_text}\n\n"
-            "Analyze the content against the approved brand rules now. Output strictly valid JSON."
+            "INSTRUCTIONS:\n"
+            "1. Evaluate semantic intent, direct claims, and implied claims in context.\n"
+            "2. Detect implied wealth promises ('build wealth effortlessly', 'money works while you sleep') and market immunity ('without worrying about market uncertainty', 'regardless of market conditions').\n"
+            "3. Disclaimers do NOT neutralize promotional body copy: flag prohibited claims in promotional copy even if a disclaimer is present.\n"
+            "4. Do NOT flag valid negations, disclaimers, or cautionary statements when the brand itself disclaims the outcome (e.g. 'We do not guarantee returns').\n"
+            "5. Do NOT flag claims attributed to competitors when the brand clearly disavows or contrasts them (e.g. 'Our competitors guarantee returns, but we don't').\n"
+            "6. DO flag direct and implied guarantees (e.g. 'Your investment will double without any risk').\n"
+            "7. Provide natural, grammatically seamless suggested corrections that fit directly into the original sentence.\n"
+            "8. Output strictly valid JSON matching the schema."
         )
 
         return gemini_client.generate_content(
@@ -152,7 +170,15 @@ class AIChecker:
             f"CONTENT TYPE: {content_type}\n\n"
             f"SUBMITTED CONTENT FOR AUDIT:\n\"\"\"\n{content}\n\"\"\"\n\n"
             f"APPROVED BRAND RULES TO ENFORCE:\n{rules_text}\n\n"
-            "Analyze the content against the approved brand rules now. Output strictly valid JSON."
+            "INSTRUCTIONS:\n"
+            "1. Evaluate semantic intent, direct claims, and implied claims in context.\n"
+            "2. Detect implied wealth promises ('build wealth effortlessly', 'money works while you sleep') and market immunity ('without worrying about market uncertainty', 'regardless of market conditions').\n"
+            "3. Disclaimers do NOT neutralize promotional body copy: flag prohibited claims in promotional copy even if a disclaimer is present.\n"
+            "4. Do NOT flag valid negations, disclaimers, or cautionary statements when the brand itself disclaims the outcome (e.g. 'We do not guarantee returns').\n"
+            "5. Do NOT flag claims attributed to competitors when the brand clearly disavows or contrasts them (e.g. 'Our competitors guarantee returns, but we don't').\n"
+            "6. DO flag direct and implied guarantees (e.g. 'Your investment will double without any risk').\n"
+            "7. Provide natural, grammatically seamless suggested corrections that fit directly into the original sentence.\n"
+            "8. Output strictly valid JSON matching the schema."
         )
 
         payload = {
@@ -279,16 +305,14 @@ class AIChecker:
 
             # Verify excerpt exists in content
             norm_excerpt = raw_excerpt.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
-            if raw_excerpt.lower() not in content.lower() and norm_excerpt.lower() not in normalized_content.lower():
+            matches = list(re.finditer(re.escape(raw_excerpt), content, re.IGNORECASE))
+            if not matches:
+                matches = list(re.finditer(re.escape(norm_excerpt), normalized_content, re.IGNORECASE))
+
+            if not matches:
                 logger.debug(f"Discarding candidate with ungrounded excerpt: '{raw_excerpt[:40]}'")
                 discarded_count += 1
                 continue
-
-            # Exact case slice from content
-            match = re.search(re.escape(raw_excerpt), content, re.IGNORECASE)
-            if not match:
-                match = re.search(re.escape(norm_excerpt), normalized_content, re.IGNORECASE)
-            actual_excerpt = content[match.start() : match.end()] if match else raw_excerpt
 
             # 2. Normalize severity
             sev = candidate.severity.lower().strip()
@@ -304,23 +328,65 @@ class AIChecker:
 
             canonical_ref = f"Rule #{matched_rule.id}: {matched_rule.title}"
 
+            # Context safeguard: find occurrence that is not a negation/cautionary or competitor claim
+            chosen_match = None
+            for m in matches:
+                m_start, m_end = m.span()
+                m_slice = content[m_start:m_end]
+                if deterministic_checker.is_negated_or_cautionary(content, m_start, m_end, m_slice, matched_rule):
+                    continue
+                if deterministic_checker.is_competitor_claim(content, m_start, m_end, m_slice):
+                    continue
+                chosen_match = m
+                break
+
+            if not chosen_match:
+                logger.info(f"Discarding candidate with negated/cautionary/competitor context: '{raw_excerpt[:40]}'")
+                discarded_count += 1
+                continue
+
+            actual_excerpt = content[chosen_match.start() : chosen_match.end()]
+            span = chosen_match.span()
+
+            # Safeguard: do not flag standard conversational social proof (e.g. 'thousands of businesses')
+            # as an unverified performance statistic, UNLESS it contains a genuine prohibited claim or empirical metric.
+            is_social_proof_phrase = any(sp in actual_excerpt.lower() for sp in ("thousands of businesses", "join thousands", "reliable support", "trusted partners"))
+            if is_social_proof_phrase:
+                has_prohibited_terms = any(
+                    pt in actual_excerpt.lower()
+                    for pt in (
+                        "guarantee", "risk-free", "risk free", "zero risk", "no risk",
+                        "double", "overnight", "rich", "millionaire", "100%", "million",
+                        "billion", "fastest", "downtime", "threat", "fraud", "destroy", "crush"
+                    )
+                )
+                is_performance_rule = (
+                    "np-comp-004" in (matched_rule.description or "").lower()
+                    or "performance" in (matched_rule.title or "").lower()
+                    or "statistic" in (matched_rule.description or "").lower()
+                )
+                if not has_prohibited_terms and is_performance_rule:
+                    logger.info(f"Discarding candidate with benign social proof: '{actual_excerpt[:40]}'")
+                    discarded_count += 1
+                    continue
+
             # 4. Normalize suggested correction
             correction = candidate.suggested_correction
             if not correction or not correction.strip():
                 correction = f"Revise '{actual_excerpt}' to align with {matched_rule.title}."
 
-            validated_findings.append(
-                FindingCreate(
-                    severity=sev,
-                    category=candidate.category.strip() or matched_rule.category,
-                    excerpt=actual_excerpt,
-                    explanation=candidate.explanation.strip(),
-                    guideline_reference=canonical_ref,
-                    suggested_correction=correction.strip(),
-                    confidence=candidate.confidence,
-                    status="open",
-                )
+            finding_obj = FindingCreate(
+                severity=sev,
+                category=candidate.category.strip() or matched_rule.category,
+                excerpt=actual_excerpt,
+                explanation=candidate.explanation.strip(),
+                guideline_reference=canonical_ref,
+                suggested_correction=correction.strip(),
+                confidence=candidate.confidence,
+                status="open",
             )
+            object.__setattr__(finding_obj, "_span", span)
+            validated_findings.append(finding_obj)
 
         logger.info(
             f"AI validation completed: validated={len(validated_findings)}, "

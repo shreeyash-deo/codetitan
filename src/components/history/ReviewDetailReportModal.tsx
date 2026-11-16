@@ -1,9 +1,13 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import type { HistoricalReviewRecord } from '@/types/approval'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { ApprovalTimelineWidget } from './ApprovalTimelineWidget'
+import { VersionHistoryModal } from '@/components/studio/VersionHistoryModal'
+import { CompareDiffModal } from '@/components/studio/CompareDiffModal'
+import { reviewService } from '@/services/reviewService'
+import type { ContentVersionSummary } from '@/types/version'
 import {
   X,
   FileCheck2,
@@ -17,6 +21,12 @@ import {
   Sparkles,
   Send,
   CornerDownRight,
+  History,
+  Layers,
+  Lock,
+  RefreshCw,
+  ArrowRight,
+  Clock,
 } from 'lucide-react'
 
 interface ReviewDetailReportModalProps {
@@ -32,8 +42,32 @@ export const ReviewDetailReportModal: React.FC<ReviewDetailReportModalProps> = (
   onClose,
   onAddComment,
 }) => {
-  const [activeTab, setActiveTab] = useState<'diff' | 'findings' | 'timeline' | 'comments'>('diff')
+  const [activeTab, setActiveTab] = useState<'history' | 'diff' | 'findings' | 'timeline' | 'comments'>('history')
   const [commentInput, setCommentInput] = useState('')
+  const [isVersionHistoryModalOpen, setIsVersionHistoryModalOpen] = useState(false)
+  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false)
+  const [versionsList, setVersionsList] = useState<ContentVersionSummary[]>([])
+  const [isLoadingVersions, setIsLoadingVersions] = useState(false)
+
+  const reviewNumericId = review?.id ? String(review.id).replace(/\D/g, '') || review.id : null
+
+  useEffect(() => {
+    if (!isOpen || !reviewNumericId) return
+    const fetchVersions = async () => {
+      setIsLoadingVersions(true)
+      try {
+        const list = await reviewService.getVersions(reviewNumericId)
+        if (list) {
+          setVersionsList(list)
+        }
+      } catch (err) {
+        console.error('Failed to load version history for review:', err)
+      } finally {
+        setIsLoadingVersions(false)
+      }
+    }
+    fetchVersions()
+  }, [isOpen, reviewNumericId])
 
   if (!isOpen || !review) return null
 
@@ -79,6 +113,15 @@ export const ReviewDetailReportModal: React.FC<ReviewDetailReportModalProps> = (
                 <span className="text-xs text-slate-400 font-mono">
                   ID: {review.id}
                 </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-[11px] gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
+                  onClick={() => setIsVersionHistoryModalOpen(true)}
+                >
+                  <History className="w-3 h-3 text-blue-600" />
+                  <span>Version History ({versionsList.length})</span>
+                </Button>
               </div>
               <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-snug">
                 {review.title}
@@ -96,24 +139,24 @@ export const ReviewDetailReportModal: React.FC<ReviewDetailReportModalProps> = (
           {/* Quick Metrics Bar */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs shrink-0">
             <div>
-              <span className="text-[10px] text-slate-400 uppercase font-semibold">Author</span>
+              <span className="text-[10px] text-slate-400 uppercase font-semibold block">Author</span>
               <div className="flex items-center gap-1.5 mt-1 font-medium text-slate-800 truncate">
                 <Avatar className="w-4 h-4">
-                  <AvatarImage src={review.submittedBy.avatar} />
-                  <AvatarFallback>{review.submittedBy.name.substring(0, 2)}</AvatarFallback>
+                  <AvatarImage src={review?.submittedBy?.avatar} />
+                  <AvatarFallback>{review?.submittedBy?.name ? review.submittedBy.name.slice(0, 2) : 'AU'}</AvatarFallback>
                 </Avatar>
-                <span className="truncate">{review.submittedBy.name}</span>
+                <span className="truncate">{review?.submittedBy?.name || 'Author'}</span>
               </div>
             </div>
 
             <div>
-              <span className="text-[10px] text-slate-400 uppercase font-semibold">Reviewer</span>
+              <span className="text-[10px] text-slate-400 uppercase font-semibold block">Reviewer</span>
               <div className="flex items-center gap-1.5 mt-1 font-medium text-slate-800 truncate">
                 <Avatar className="w-4 h-4">
-                  <AvatarImage src={review.assignedReviewer.avatar} />
-                  <AvatarFallback>{review.assignedReviewer.name.substring(0, 2)}</AvatarFallback>
+                  <AvatarImage src={review?.assignedReviewer?.avatar} />
+                  <AvatarFallback>{review?.assignedReviewer?.name ? review.assignedReviewer.name.slice(0, 2) : 'RV'}</AvatarFallback>
                 </Avatar>
-                <span className="truncate">{review.assignedReviewer.name}</span>
+                <span className="truncate">{review?.assignedReviewer?.name || 'Reviewer'}</span>
               </div>
             </div>
 
@@ -145,7 +188,19 @@ export const ReviewDetailReportModal: React.FC<ReviewDetailReportModalProps> = (
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex items-center gap-1 border-b border-border pb-1 shrink-0 text-xs font-medium">
+          <div className="flex items-center gap-1 border-b border-border pb-1 shrink-0 text-xs font-medium flex-wrap">
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors ${
+                activeTab === 'history'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>Version History ({versionsList.length})</span>
+            </button>
+
             <button
               onClick={() => setActiveTab('diff')}
               className={`px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors ${
@@ -194,6 +249,109 @@ export const ReviewDetailReportModal: React.FC<ReviewDetailReportModalProps> = (
               <span>Reviewer Comments ({review.comments.length})</span>
             </button>
           </div>
+
+          {/* Tab 0: Version History */}
+          {activeTab === 'history' && (
+            <div className="space-y-3 overflow-y-auto flex-1">
+              <div className="flex items-center justify-between pb-2 border-b border-border">
+                <div className="flex items-center gap-2">
+                  <History className="w-4 h-4 text-blue-600" />
+                  <span className="font-semibold text-slate-800 text-xs">
+                    Immutable Historical Versions ({versionsList.length})
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1 text-blue-700 border-blue-200"
+                  onClick={() => setIsVersionHistoryModalOpen(true)}
+                >
+                  <Layers className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Interactive Version Inspector</span>
+                </Button>
+              </div>
+
+              {isLoadingVersions ? (
+                <div className="flex items-center justify-center p-8 text-slate-400 gap-2 text-xs">
+                  <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+                  <span>Loading version records...</span>
+                </div>
+              ) : versionsList.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-xs border border-dashed rounded-lg bg-slate-50/50">
+                  No version snapshots found for this review.
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {versionsList.map((v) => (
+                    <div
+                      key={v.id}
+                      className="p-3.5 rounded-lg border border-slate-200 bg-white hover:border-slate-300 shadow-2xs space-y-2 text-xs"
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 font-mono">
+                            v{v.versionNumber}
+                          </span>
+                          <span className="font-semibold text-slate-800">
+                            {v.changeDescription || (v.versionNumber === 1 ? 'Initial Submission' : 'Content updated')}
+                          </span>
+                          {v.isCurrent && (
+                            <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200 font-semibold">
+                              Current Active
+                            </Badge>
+                          )}
+                          {v.versionNumber === 1 && (
+                            <Badge variant="outline" className="text-[10px] text-slate-600 border-slate-300">
+                              Original
+                            </Badge>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          {v.versionState === 'approved' ? (
+                            <Badge variant="success" className="text-[10px]">Approved</Badge>
+                          ) : v.versionState === 'submitted' ? (
+                            <Badge variant="blue" className="text-[10px]">Submitted for Sign-off</Badge>
+                          ) : v.versionState === 'changes_requested' ? (
+                            <Badge variant="warning" className="text-[10px]">Changes Requested</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px]">{v.versionState || 'Audited'}</Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 pt-1 border-t border-slate-100">
+                        <div className="flex items-center gap-3">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-slate-400" />
+                            {new Date(v.createdAt).toLocaleString()}
+                          </span>
+                          {v.authorName && (
+                            <span className="flex items-center gap-1 text-slate-700 font-medium">
+                              <User className="w-3 h-3 text-slate-400" />
+                              {v.authorName}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2.5">
+                          <span className="font-semibold">
+                            Score: <strong className={(v.complianceScore ?? (v as any).compliance_score ?? 100) >= 90 ? 'text-emerald-700' : 'text-blue-700'}>{v.complianceScore ?? (v as any).compliance_score ?? 100}/100</strong>
+                          </span>
+                          <span className="text-slate-400 font-mono">
+                            {v.findingsCount ?? (v as any).findings_count ?? 0} violations
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-400">
+                            SHA: {(v.contentHash || (v as any).content_hash || '').slice(0, 8)}...
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Tab 1: Version Diff */}
           {activeTab === 'diff' && (
@@ -338,7 +496,7 @@ export const ReviewDetailReportModal: React.FC<ReviewDetailReportModalProps> = (
                         <div className="flex items-center gap-2">
                           <Avatar className="w-5 h-5">
                             <AvatarImage src={c.authorAvatar} />
-                            <AvatarFallback>{c.authorName.substring(0, 2)}</AvatarFallback>
+                            <AvatarFallback>{c.authorName ? c.authorName.slice(0, 2) : 'US'}</AvatarFallback>
                           </Avatar>
                           <span className="font-semibold text-slate-900">{c.authorName}</span>
                           <span className="text-[10px] text-slate-400">({c.authorRole})</span>
@@ -382,6 +540,14 @@ export const ReviewDetailReportModal: React.FC<ReviewDetailReportModalProps> = (
           </div>
         </div>
       </div>
+
+      {/* Interactive Full Version History Modal */}
+      <VersionHistoryModal
+        reviewId={reviewNumericId}
+        reviewTitle={review.title}
+        isOpen={isVersionHistoryModalOpen}
+        onClose={() => setIsVersionHistoryModalOpen(false)}
+      />
     </div>
   )
 }

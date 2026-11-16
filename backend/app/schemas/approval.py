@@ -35,6 +35,7 @@ class ApprovalOut(ApprovalBase):
     brand_rule_id: Optional[int] = None
     submitted_by: Optional[int] = None
     reviewer_id: Optional[int] = None
+    version_number: Optional[int] = None
     created_at: datetime
     updated_at: datetime
     submitter: Optional[UserOut] = None

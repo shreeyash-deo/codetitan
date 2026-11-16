@@ -1319,6 +1319,18 @@ def _map_review_to_historical_record(r: ContentReview, current_user: User) -> Di
         "approvalStatus": approval_status,
         "originalContent": r.original_content,
         "correctedContent": r.content,
+        "currentVersionNumber": getattr(r, "current_version_number", 1),
+        "versions": [
+            {
+                "id": v.id,
+                "versionNumber": v.version_number,
+                "complianceScore": v.compliance_score,
+                "auditStatus": v.audit_status,
+                "changeDescription": v.change_description,
+                "createdAt": v.created_at.isoformat() if v.created_at else None,
+            }
+            for v in (getattr(r, "versions", None) or [])
+        ],
         "findings": findings,
         "acceptedSuggestionsCount": sum(1 for f in findings_list if getattr(f, "status", None) in ("accepted", "applied")),
         "rejectedSuggestionsCount": sum(1 for f in findings_list if getattr(f, "status", None) == "rejected"),

@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { ReviewDetailReportModal } from '@/components/history/ReviewDetailReportModal'
+import { VersionHistoryModal } from '@/components/studio/VersionHistoryModal'
 import { useGovernance } from '@/context/GovernanceContext'
 import { useWorkspace } from '@/hooks/useWorkspace'
 import { useToast } from '@/context/ToastContext'
@@ -21,6 +22,7 @@ import {
   XCircle,
   ArrowRight,
   ShieldCheck,
+  History,
 } from 'lucide-react'
 
 export const ReviewHistoryPage: React.FC = () => {
@@ -37,6 +39,7 @@ export const ReviewHistoryPage: React.FC = () => {
   const [activeFilter, setActiveFilter] = useState<ApprovalFilter>(initialFilter)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedReview, setSelectedReview] = useState<HistoricalReviewRecord | null>(null)
+  const [versionHistoryReview, setVersionHistoryReview] = useState<HistoricalReviewRecord | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
 
   // Filter reviews
@@ -288,11 +291,11 @@ export const ReviewHistoryPage: React.FC = () => {
                         <td className="px-4 py-3.5 whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <Avatar className="w-5 h-5">
-                              <AvatarImage src={rev.submittedBy.avatar} />
-                              <AvatarFallback>{rev.submittedBy.name.substring(0, 2)}</AvatarFallback>
+                              <AvatarImage src={rev.submittedBy?.avatar} />
+                              <AvatarFallback>{rev.submittedBy?.name?.slice(0, 2) || 'AU'}</AvatarFallback>
                             </Avatar>
                             <span className="text-slate-800 font-medium truncate">
-                              {rev.submittedBy.name}
+                              {rev.submittedBy?.name || 'Unknown'}
                             </span>
                           </div>
                         </td>
@@ -302,11 +305,11 @@ export const ReviewHistoryPage: React.FC = () => {
                       <td className="px-4 py-3.5 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <Avatar className="w-5 h-5">
-                            <AvatarImage src={rev.assignedReviewer.avatar} />
-                            <AvatarFallback>{rev.assignedReviewer.name.substring(0, 2)}</AvatarFallback>
+                            <AvatarImage src={rev.assignedReviewer?.avatar} />
+                            <AvatarFallback>{rev.assignedReviewer?.name?.slice(0, 2) || 'RV'}</AvatarFallback>
                           </Avatar>
                           <span className="text-slate-700 truncate">
-                            {rev.assignedReviewer.name}
+                            {rev.assignedReviewer?.name || 'Unassigned'}
                           </span>
                         </div>
                       </td>
@@ -356,10 +359,24 @@ export const ReviewHistoryPage: React.FC = () => {
 
                       {/* Action */}
                       <td className="px-4 py-3.5 whitespace-nowrap text-right">
-                        <span className="text-blue-600 font-medium text-xs group-hover:underline inline-flex items-center gap-1">
-                          View Report
-                          <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-                        </span>
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-6 text-[11px] gap-1 text-slate-600 hover:text-blue-600"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setVersionHistoryReview(rev)
+                            }}
+                          >
+                            <History className="w-3 h-3 text-slate-500" />
+                            <span>Versions</span>
+                          </Button>
+                          <span className="text-blue-600 font-medium text-xs group-hover:underline inline-flex items-center gap-1">
+                            Report
+                            <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                          </span>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -376,6 +393,14 @@ export const ReviewHistoryPage: React.FC = () => {
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
         onAddComment={addComment}
+      />
+
+      {/* Standalone Version History Modal */}
+      <VersionHistoryModal
+        reviewId={versionHistoryReview?.id ? String(versionHistoryReview.id).replace(/\D/g, '') || versionHistoryReview.id : null}
+        reviewTitle={versionHistoryReview?.title}
+        isOpen={!!versionHistoryReview}
+        onClose={() => setVersionHistoryReview(null)}
       />
     </motion.div>
   )
