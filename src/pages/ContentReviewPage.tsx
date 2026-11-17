@@ -64,6 +64,7 @@ export const ContentReviewPage: React.FC = () => {
   const [activeReviewId, setActiveReviewId] = useState<string | null>(null)
   const [realBackendScore, setRealBackendScore] = useState<number | null>(null)
   const [realSummary, setRealSummary] = useState<string | null>(null)
+  const [realBackendAuditStatus, setRealBackendAuditStatus] = useState<string>('verified')
   const [lastAuditedContent, setLastAuditedContent] = useState<string | null>(null)
   const [currentVersionNumber, setCurrentVersionNumber] = useState<number>(1)
 
@@ -195,6 +196,7 @@ export const ContentReviewPage: React.FC = () => {
         const data = res?.data ?? res
         setRealBackendScore(data.compliance_score)
         setRealSummary(data.summary)
+        setRealBackendAuditStatus(data.audit_status || 'verified')
         const newContent = data?.content ?? data?.updated_content ?? content.trim()
         setLastAuditedContent(newContent)
 
@@ -217,7 +219,8 @@ export const ContentReviewPage: React.FC = () => {
 
         setFindings(mapBackendFindings(data.findings || []))
         setStudioState('results')
-        success(`Recheck completed. Verified compliance score: ${data.compliance_score}/100.`, 'Analysis Verified')
+        const verifiedLabel = data.audit_status === 'degraded' ? 'Degraded deterministic compliance score' : 'Verified compliance score'
+        success(`Recheck completed. ${verifiedLabel}: ${data.compliance_score}/100.`, 'Analysis Verified')
         return
       }
 
@@ -235,6 +238,7 @@ export const ContentReviewPage: React.FC = () => {
       setRealBackendScore(result.overallScore)
       setRealSummary(result.summary)
       setLastAuditedContent(content.trim())
+      setRealBackendAuditStatus(result.auditStatus || 'verified')
 
       if (result.status === 'rules_unavailable' || result.hasApprovedRules === false) {
         setFindings([])
@@ -258,7 +262,8 @@ export const ContentReviewPage: React.FC = () => {
 
       setFindings(mapBackendFindings(result.findings || []))
       setStudioState('results')
-      success(`Compliance analysis completed. Compliance score: ${result.overallScore}/100.`, 'Analysis Complete')
+      const initialLabel = result.auditStatus === 'degraded' ? 'Degraded deterministic compliance score' : 'Verified compliance score'
+      success(`Compliance analysis completed. ${initialLabel}: ${result.overallScore}/100.`, 'Analysis Complete')
     } catch (err: any) {
       const msg = err?.detail || err?.message || 'Compliance analysis failed'
       toastError(msg, 'Audit Notice')
@@ -285,6 +290,7 @@ export const ContentReviewPage: React.FC = () => {
         const newContent = data?.content ?? data?.updated_content ?? content
         setContent(newContent)
         setRealBackendScore(data.compliance_score)
+        setRealBackendAuditStatus(data.audit_status || 'verified')
         setLastAuditedContent(newContent)
         if (data.findings) {
           setFindings(mapBackendFindings(data.findings))
@@ -366,6 +372,7 @@ export const ContentReviewPage: React.FC = () => {
         const newContent = data?.content ?? data?.updated_content ?? content
         setContent(newContent)
         setRealBackendScore(data.compliance_score)
+        setRealBackendAuditStatus(data.audit_status || 'verified')
         setLastAuditedContent(newContent)
         if (data.findings) {
           setFindings(mapBackendFindings(data.findings))
@@ -536,12 +543,14 @@ export const ContentReviewPage: React.FC = () => {
         })
         const data = res?.data ?? res
         setRealBackendScore(data.compliance_score)
+        setRealBackendAuditStatus(data.audit_status || 'verified')
         const newContent = data?.content ?? data?.updated_content ?? content.trim()
         setLastAuditedContent(newContent)
         if (data.findings) {
           setFindings(mapBackendFindings(data.findings))
         }
-        success(`Review for "${title}" saved and verified by compliance engine. Score: ${data.compliance_score}/100.`, 'Review Saved & Verified')
+        const saveNotice = data.audit_status === 'degraded' ? 'saved (degraded audit)' : 'saved and verified by compliance engine'
+        success(`Review for "${title}" ${saveNotice}. Score: ${data.compliance_score}/100.`, 'Review Saved')
       } catch (err: any) {
         toastError(err?.response?.data?.detail || err?.detail || err?.message || 'Failed to save review', 'Save Failed')
       } finally {
@@ -974,6 +983,12 @@ export const ContentReviewPage: React.FC = () => {
                   <Badge variant="blue" className="text-[10px] font-mono">
                     {contentType}
                   </Badge>
+                  {realBackendAuditStatus === 'degraded' && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border border-amber-500/50 bg-amber-950/70 text-amber-300 font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      Degraded Audit (Deterministic)
+                    </span>
+                  )}
                   <span className="text-xs text-slate-400">
                     Audit complete for {currentWorkspace?.name || 'Organisation'}
                   </span>
@@ -988,7 +1003,9 @@ export const ContentReviewPage: React.FC = () => {
                         ? `Draft modified with ${acceptedCount} correction(s). Click "Recheck Content" to re-verify compliance score.`
                         : (totalFindings > 0
                             ? `${findings.length} findings identified. Remediate and recheck before publication.`
-                            : 'All brand compliance checks verified. Content ready for publication.'))}
+                            : (realBackendAuditStatus === 'degraded'
+                                ? 'Deterministic compliance check completed. AI semantic analysis was unavailable.'
+                                : 'All brand compliance checks verified. Content ready for publication.')))}
                 </p>
               </div>
 
@@ -1000,7 +1017,11 @@ export const ContentReviewPage: React.FC = () => {
                     {!isRulesUnavailable && <span className="text-xs text-slate-400 font-normal">/100</span>}
                   </span>
                   <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
-                    {isRulesUnavailable ? 'Incomplete' : (isDraftModified ? 'Unverified' : 'Verified Score')}
+                    {isRulesUnavailable 
+                      ? 'Incomplete' 
+                      : (isDraftModified 
+                          ? 'Unverified' 
+                          : (realBackendAuditStatus === 'degraded' ? 'Degraded Audit' : 'Verified Score'))}
                   </span>
                 </div>
 

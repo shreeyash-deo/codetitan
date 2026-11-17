@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # AI Provider Configuration
     AI_PROVIDER: str = "gemini"  # "gemini" or "deepseek"
     AI_MODEL: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MODEL: str = "gemini-3.8-flash"
     GEMINI_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""
     DEEPSEEK_API_KEY: str = ""
@@ -112,9 +112,9 @@ class Settings(BaseSettings):
         """
         Precedence: GEMINI_MODEL is preferred.
         AI_MODEL is supported as fallback.
-        Defaults to 'gemini-2.0-flash' if neither is set.
+        Defaults to 'gemini-3.8-flash' if neither is set.
         """
-        return (self.GEMINI_MODEL or self.AI_MODEL or "gemini-2.0-flash").strip()
+        return (self.GEMINI_MODEL or self.AI_MODEL or "gemini-3.8-flash").strip()
 
     model_config = SettingsConfigDict(
         env_file=(

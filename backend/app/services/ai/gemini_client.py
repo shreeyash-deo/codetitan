@@ -79,6 +79,7 @@ class GeminiClient:
     """
 
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+    DEFAULT_FALLBACK_MODELS = ["gemini-3.8-flash", "gemini-3-flash-preview"]
 
     def __init__(
         self,
@@ -93,6 +94,7 @@ class GeminiClient:
         self.temperature = temperature if temperature is not None else settings.AI_TEMPERATURE
         self.timeout = timeout if timeout is not None else settings.AI_TIMEOUT
         self.max_retries = max_retries if max_retries is not None else settings.AI_MAX_RETRIES
+        self._active_fallback_model: Optional[str] = None
 
     @property
     def api_key(self) -> str:
@@ -108,8 +110,10 @@ class GeminiClient:
     def model(self) -> str:
         """
         Resolved model identifier.
-        Precedence: Explicit argument > settings.GEMINI_MODEL > settings.AI_MODEL > 'gemini-2.0-flash'.
+        Precedence: Active fallback > Explicit argument > settings.GEMINI_MODEL > settings.AI_MODEL > 'gemini-3.8-flash'.
         """
+        if self._active_fallback_model:
+            return self._active_fallback_model.strip()
         if self._explicit_model:
             return self._explicit_model.strip()
         return settings.active_gemini_model
@@ -171,46 +175,14 @@ class GeminiClient:
             f"Gemini API returned HTTP {status_code} ({error_status or 'ERROR'}): {error_message[:250]}"
         )
 
-    def generate_content(
+    def _call_model_api(
         self,
-        prompt: str,
-        system_instruction: str = "",
-        response_mime_type: str = "application/json",
-        temperature: Optional[float] = None,
+        model_name: str,
+        payload: Dict[str, Any],
+        headers: Dict[str, str],
     ) -> str:
-        """
-        Execute generateContent request against Google Generative Language API (v1beta).
-        Applies retry policy for transient errors, redacts credentials, and extracts structured text.
-        """
-        self.validate_configuration()
-
-        temp = temperature if temperature is not None else self.temperature
-        url = f"{self.BASE_URL}/{self.model}:generateContent"
-
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": self.api_key,
-        }
-
-        payload: Dict[str, Any] = {
-            "contents": [
-                {
-                    "parts": [{"text": prompt}]
-                }
-            ],
-            "generationConfig": {
-                "temperature": temp,
-            },
-        }
-
-        if response_mime_type:
-            payload["generationConfig"]["response_mime_type"] = response_mime_type
-
-        if system_instruction:
-            payload["system_instruction"] = {
-                "parts": [{"text": system_instruction}]
-            }
-
+        """Execute HTTP request against specific Gemini model endpoint with retries."""
+        url = f"{self.BASE_URL}/{model_name}:generateContent"
         retries = 0
         last_error: Optional[Exception] = None
 
@@ -270,6 +242,71 @@ class GeminiClient:
         if last_error:
             raise last_error
         raise GeminiError("Gemini API request failed after exhausting retry attempts.")
+
+    def generate_content(
+        self,
+        prompt: str,
+        system_instruction: str = "",
+        response_mime_type: str = "application/json",
+        temperature: Optional[float] = None,
+    ) -> str:
+        """
+        Execute generateContent request against Google Generative Language API (v1beta).
+        Applies retry policy for transient errors, redacts credentials, handles model fallbacks,
+        and extracts structured text.
+        """
+        self.validate_configuration()
+
+        temp = temperature if temperature is not None else self.temperature
+
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
+
+        payload: Dict[str, Any] = {
+            "contents": [
+                {
+                    "parts": [{"text": prompt}]
+                }
+            ],
+            "generationConfig": {
+                "temperature": temp,
+            },
+        }
+
+        if response_mime_type:
+            payload["generationConfig"]["response_mime_type"] = response_mime_type
+
+        if system_instruction:
+            payload["system_instruction"] = {
+                "parts": [{"text": system_instruction}]
+            }
+
+        target_model = self.model
+        try:
+            return self._call_model_api(target_model, payload, headers)
+        except GeminiModelError as model_err:
+            # Attempt automatic fallback to supported modern flash models
+            fallback_candidates = [
+                fb for fb in self.DEFAULT_FALLBACK_MODELS if fb != target_model
+            ]
+            for fb_model in fallback_candidates:
+                try:
+                    logger.warning(
+                        f"Configured Gemini model '{target_model}' failed ({model_err}). "
+                        f"Attempting automatic fallback to '{fb_model}'."
+                    )
+                    result_text = self._call_model_api(fb_model, payload, headers)
+                    self._active_fallback_model = fb_model
+                    logger.info(f"Gemini fallback to model '{fb_model}' succeeded.")
+                    return result_text
+                except Exception as fb_exc:
+                    logger.warning(f"Fallback model '{fb_model}' also failed: {fb_exc}")
+                    continue
+
+            # If all fallbacks failed, re-raise original model error
+            raise model_err
 
     def check_health(self, probe_live: bool = False) -> Dict[str, Any]:
         """

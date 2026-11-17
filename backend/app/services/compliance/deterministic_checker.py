@@ -124,6 +124,10 @@ class DeterministicChecker:
         ):
             return True
 
+        # 5b. Quantifier / subject negation: e.g. "No procedure guarantees", "No investment guarantees", "Neither product promises"
+        if re.search(r"\b(?:no|neither)\s+(?:\w+\s+){0,3}$", pre, re.IGNORECASE):
+            return True
+
         # 6. Disclaimers and regulatory caution:
         if re.search(r"\b(disclaim|disclaims|disclaimed|disclaiming)\s+(?:\w+\s+){0,3}$", pre, re.IGNORECASE):
             return True
@@ -192,6 +196,14 @@ class DeterministicChecker:
     def extract_prohibited_terms_from_rule(cls, rule: BrandRule) -> List[str]:
         """Extract targeted prohibited terms from quotes or enumerated text patterns in the rule description."""
         terms = []
+
+        # If rule specifies "Use X instead of Y", do not treat X (the preferred term) as prohibited
+        if re.search(r"use\s+['\"][^'\"]+['\"]\s+instead\s+of", rule.description, re.IGNORECASE):
+            m = re.search(r"instead\s+of\s+['\"]([^'\"]+)['\"]", rule.description, re.IGNORECASE)
+            if m:
+                terms.append(m.group(1).strip())
+            return terms
+
         for q in cls.extract_quoted_terms(rule.description):
             if len(q) <= 100:
                 terms.append(q)
@@ -201,17 +213,17 @@ class DeterministicChecker:
 
         # Prohibited expressions / messaging listed after marker phrases
         marker = re.search(
-            r"(?:prohibited\s+(?:expressions|messaging|terms|phrases|words|language)\s+(?:include|includes):?|such\s+as:?|e\.g\.:?|do\s+not\s+use:?|avoid:?)\s*(.+)",
+            r"(?:prohibited\s+(?:expressions|messaging|terms|phrases|words|language)\s+(?:include|includes|are):?|such\s+as:?|e\.g\.?:?|do\s+not\s+use:?|avoid(?:\s+\w+){0,4}\s+(?:like|such\s+as):?|avoid:?|never\s+use:?|refrain\s+from(?:\s+using)?:?)\s*(.+)",
             rule.description,
             re.IGNORECASE,
         )
         if marker:
             tail = marker.group(1).strip()
-            # Split on sentence-ending period followed by space and capital, or commas/semicolons
-            raw_parts = re.split(r"(?<=[a-zA-Z0-9])\.\s+(?=[A-Z0-9])|[,;]\s+|\n+", tail)
+            # Split on sentence-ending period followed by space and capital, or commas/semicolons/conjunctions
+            raw_parts = re.split(r"(?<=[a-zA-Z0-9])\.\s+(?=[A-Z0-9])|[,;]\s+|\s+or\s+|\s+and\s+|\n+", tail)
             for part in raw_parts:
                 p = part.strip().strip(".!?:;\"'")
-                if 3 <= len(p) <= 80 and not p.lower().startswith("do not") and not p.lower().startswith("any "):
+                if 3 <= len(p) <= 80 and not p.lower().startswith(("do not", "any ", "such ")):
                     terms.append(p)
 
         return list(dict.fromkeys(terms))
@@ -226,15 +238,18 @@ class DeterministicChecker:
         findings: List[FindingCreate] = []
         rule_desc_l = rule.description.lower()
         rule_title_l = rule.title.lower()
+        cat_lower = (rule.category or "").lower()
+
+        restricted_cat_keywords = (
+            "terminology", "restricted", "prohibited", "content restriction",
+            "voice", "tone", "slang", "vocabulary", "language", "words",
+            "claims & restrictions", "claims and restrictions", "restrictions",
+            "claims", "guidelines", "governance"
+        )
         is_restricted_cat = (
-            rule.category.lower() in ("restricted terminology", "content restrictions", "brand voice and tone")
-            or "prohibit" in rule_title_l
-            or "restricted" in rule_title_l
-            or "never use" in rule_desc_l
-            or "do not use" in rule_desc_l
-            or "must not" in rule_desc_l
-            or "not allowed" in rule_desc_l
-            or "np-comp" in rule_desc_l
+            any(k in cat_lower for k in restricted_cat_keywords)
+            or any(k in rule_title_l for k in ("prohibit", "restrict", "avoid", "slang", "informal", "unapproved", "banned", "never", "do not", "terminology", "phrase"))
+            or any(k in rule_desc_l for k in ("avoid", "refrain", "never use", "do not use", "must not", "not allowed", "not permitted", "prohibit", "restrict", "disallow", "banned", "unapproved", "slang", "informal", "np-comp"))
         )
 
         if not is_restricted_cat:
@@ -254,7 +269,7 @@ class DeterministicChecker:
                     continue
 
                 t_low = term.lower()
-                rep = "reliable alternative"
+                rep = "appropriate alternative"
                 if "risk-free" in t_low or "risk free" in t_low:
                     rep = "secure, risk-managed"
                 elif "guarantee" in t_low:
@@ -264,7 +279,9 @@ class DeterministicChecker:
                 elif "rich" in t_low or "millionaire" in t_low:
                     rep = "sustainable business growth"
                 elif "crazy secret" in t_low:
-                    rep = "proven methodology"
+                    rep = "proven approach"
+                elif "miracle cure" in t_low:
+                    rep = "effective formula"
                 elif "the single best" in t_low:
                     rep = "a leading"
                 elif "double" in t_low:
@@ -273,8 +290,6 @@ class DeterministicChecker:
                     rep = "build wealth sustainably" if "build" in t_low else "sustainable wealth creation"
                 elif "effortless" in t_low:
                     rep = "systematic"
-                else:
-                    rep = "responsible alternative"
 
                 f_item = FindingCreate(
                     severity=cls.extract_rule_severity(rule, default="major"),
@@ -305,7 +320,7 @@ class DeterministicChecker:
         canonical_ref = f"Rule #{rule.id}: {rule.title}"
         cat = rule.category
 
-        # Performance Guarantees (Guaranteed Financial Returns / Promised Outcomes)
+        # Performance Guarantees (Guaranteed Financial Returns / Promised Outcomes / Absolute Guarantees)
         is_guarantee_concept = (
             "np-comp-001" in rule_desc_l
             or "guaranteed financial returns" in rule_title_l
@@ -313,9 +328,23 @@ class DeterministicChecker:
             or "guarantee" in rule_desc_l
             or "promised return" in rule_desc_l
             or "promised outcome" in rule_desc_l
+            or "promise absolute" in rule_desc_l
+            or "absolute guarantee" in rule_title_l
+            or "absolute guarantee" in rule_desc_l
+            or "100% guaranteed" in rule_desc_l
+            or "unqualified" in rule_desc_l
         )
         if is_guarantee_concept:
+            stop_preps = r"(?!(?:for|in|to|at|by|with|on|from|of|and|or|every|each|all)\b)"
             guarantee_patterns = [
+                # 1. Absolute 100% performance guarantees (e.g. 'guarantee 100% flawless skin')
+                (rf"\bguarantee(?:s|d|ing)?\s+100%\s+(?:[a-zA-Z-]+\s+)?{stop_preps}[a-zA-Z-]+\b", "support healthy skin", f"Absolute 100% performance guarantees violate rule '{rule.title}'."),
+                (r"\b100%\s+guarantee(?:s|d|ing)?\b", "proven", "Absolute guarantees violate governance standards."),
+                # 2. Absolute permanence / complete elimination claims (e.g. 'Dark spots will disappear FOREVER, no exceptions')
+                (r"(?<![a-zA-Z0-9])(?:([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+)?(?:will\s+)?(?:disappear|vanish|be\s+eliminated|fade\s+away)\s+forever(?:,\s*no\s+exceptions)?\b", "may help reduce the appearance of dark spots over time", f"Absolute outcome promises without qualification violate rule '{rule.title}'."),
+                # 3. Unrealistic / unbelievable result guarantees (e.g. 'guarantees unbelievable results')
+                (r"\b(?:guarantee(?:s|d|ing)?\s+(?:unbelievable|unrealistic|miraculous|magical|flawless|perfect|instant|permanent|astonishing|phenomenal|extraordinary)\s+results?|guarantee(?:s|d|ing)?\s+results?|guaranteed\s+results?|promise(?:s|d|ing)?\s+(?:absolute|100%|guaranteed)\s+results?)\b", "delivers visible results", f"Guarantees of unbelievable, absolute, or unqualified results violate rule '{rule.title}'."),
+                # Financial and legacy guarantee patterns
                 (r"\bguaranteed to double\b", "designed to help scale", "Performance guarantees ('guaranteed to double') violate financial compliance standards."),
                 (r"\bguarantees?\s+instant\s+settlements?\b", "enables fast settlements", "Guarantees of financial outcomes and instant settlements are prohibited."),
                 (r"\bguaranteed success\b", "reliable support", "Guarantees of business or investment success are prohibited."),
@@ -323,7 +352,6 @@ class DeterministicChecker:
                 (r"\bguaranteed returns?\b", "target returns", "Guaranteed returns violate financial compliance rules."),
                 (r"\bguarantees?\s+(?:\d+%\s+)?profits?\b", "potential growth", "Guaranteed profits violate financial compliance rules."),
                 (r"\bguaranteed profits?\b", "potential growth", "Guaranteed profits violate financial compliance rules."),
-                (r"\b100%\s+guaranteed\b", "proven", "Absolute guarantees violate governance standards."),
                 # Implied guarantees
                 (r"\b(?:will|to)\s+double\s+(?:your\s+)?(?:investment|revenue|money|returns?|capital)\b", "aims to scale your business sustainably", "Implied performance guarantees violate financial compliance standards."),
                 (r"\b(?:investment|revenue|money|returns?|capital)\s+will\s+double\b", "investment is structured for growth", "Implied performance guarantees violate financial compliance standards."),
